@@ -32,13 +32,15 @@ from engine.tool_catalog import ToolCatalog
 from engine.validation_gate import validate_call
 from engine.dual_output import DualOutput
 from engine.self_verification import run_self_verification   # BOX 6.8
+from engine.correlation import run_correlation, Observation, ExpectedArtifact   # BOX 6.6
 
 
 # --- what the agent can decide to do on a given step -------------------------
 
 class ActionKind(str, Enum):
-    CALL_TOOL = "call_tool"   # gather evidence with an allow-listed tool
-    CONCLUDE = "conclude"     # the agent is done; leave the loop
+    CALL_TOOL = "call_tool"   # GATHER: pull evidence with an allow-listed tool
+    ANALYZE = "analyze"       # THINK: connect the dots on evidence already gathered (6.6/6.7)
+    CONCLUDE = "conclude"     # FINISH: the agent is done; leave the loop
 
 
 @dataclass
@@ -60,6 +62,11 @@ class AgentAction:
     finding_statement: str = ""                    # a grounded finding to accept (6.5)
     finding_evidence_ids: list[str] = field(default_factory=list)
     absence: dict | None = None                    # {looked_for, location, suspicious, note} (6.6/W1)
+
+    # for CORRELATION (box 6.6): facts the agent extracted + what it expected.
+    observations: list[dict] | None = None         # each {source_id, claim_key, value}
+    expected: list[dict] | None = None             # each {label, locator, reason}
+    present_locators: list[str] | None = None      # locators actually present in the capture
 
     # for kind == CONCLUDE:
     conclusion: str = ""
@@ -152,6 +159,36 @@ class BoundedInvestigationLoop:
             # optional: record a suspicious absence (6.6 / W1)
             if action.absence:
                 self.memory.record_absence(**action.absence)
+
+            # CORRELATION (BOX 6.6): if the agent handed us facts + expectations,
+            # connect the dots (corroborations/conflicts) and compute absences
+            # ("missing != deleted"). Deterministic; writes results into memory.
+            analysis_note = ""
+            if action.observations or action.expected:
+                obs = [
+                    Observation(source_id=str(o.get("source_id", "")),
+                                claim_key=str(o.get("claim_key", "")),
+                                value=str(o.get("value", "")))
+                    for o in (action.observations or [])
+                ]
+                exp = [
+                    ExpectedArtifact(label=str(e.get("label", "")),
+                                     locator=str(e.get("locator", "")),
+                                     reason=str(e.get("reason", "")))
+                    for e in (action.expected or [])
+                ]
+                present = set(action.present_locators or [])
+                cresult = run_correlation(self.memory, obs, exp, present)
+                analysis_note = (
+                    f"Correlation (6.6): {len(cresult.corroborations)} corroboration(s), "
+                    f"{len(cresult.conflicts)} conflict(s), {len(cresult.absences)} absence(s) recorded."
+                )
+
+            # THINK: ANALYZE -> a pure reasoning step. The bookkeeping above
+            # (hypotheses/findings/absences/correlation) already ran; just loop on.
+            if action.kind == ActionKind.ANALYZE:
+                last_observation = analysis_note or "Analysis step recorded; continue investigating."
+                continue
 
             # terminal: CONCLUDE -> run the BOX 6.8 self-verification GATE first
             if action.kind == ActionKind.CONCLUDE:

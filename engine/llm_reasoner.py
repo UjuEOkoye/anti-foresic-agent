@@ -148,8 +148,15 @@ choose the single next action that best advances the investigation.
 
 HARD RULES (follow exactly):
 - Respond with ONE JSON object and NOTHING else. No prose, no markdown fences.
-- Choose exactly ONE action per step: either "call_tool" or "conclude".
+- Choose exactly ONE action per step: "call_tool" (gather evidence),
+  "analyze" (connect the dots on evidence you already have), or "conclude".
 - You may ONLY call a tool listed in TOOLS below, with its listed arguments.
+- After gathering some evidence, use an "analyze" step to CORRELATE: list the
+  facts you found as "observations", giving each a short shared "claim_key" (so
+  the same fact seen in two sources lines up) and the evidence id it came from.
+  List any artifact you EXPECTED under "expected" plus the locators actually
+  present under "present_locators"; anything expected-but-missing is recorded as
+  an absence to investigate — NOT proof of deletion.
 - NEVER assume, guess, or name a specific application. Reason only from what the
   tools actually return. The identity of any tool is an OUTPUT, never an input.
 - A "finding" is something a tool PROVED. It MUST cite at least one evidence id
@@ -165,12 +172,17 @@ HARD RULES (follow exactly):
 REPLY SCHEMA (include only the keys you need):
 {
   "thought": "one or two sentences of your reasoning this step",
-  "action": "call_tool" | "conclude",
+  "action": "call_tool" | "analyze" | "conclude",
 
   // when action == "call_tool":
   "tool_name": "<one of the TOOLS names>",
   "tool_args": { ...arguments for that tool... },
   "keep_fields": ["optional", "list of output fields to keep in full"],
+
+  // when action == "analyze" (correlation, box 6.6):
+  "observations": [ {"source_id": "E0001", "claim_key": "wiped_file", "value": "report.pdf"} ],
+  "expected": [ {"label": "usage_stats for the app", "locator": "<path>", "reason": "why expected"} ],
+  "present_locators": ["<path actually present>", "<another>"],
 
   // optional bookkeeping you may attach on ANY step:
   "propose_hypothesis": "a theory to track (unproven)",
@@ -297,6 +309,33 @@ class LLMReasoner(Reasoner):
                 "note": str(raw_absence.get("note", "")),
             }
 
+        # correlation inputs (box 6.6): sanitize each dict to only the keys we use
+        observations = None
+        raw_obs = doc.get("observations")
+        if isinstance(raw_obs, list):
+            observations = [
+                {"source_id": str(o.get("source_id", "")),
+                 "claim_key": str(o.get("claim_key", "")),
+                 "value": str(o.get("value", ""))}
+                for o in raw_obs if isinstance(o, dict)
+            ]
+
+        expected = None
+        raw_exp = doc.get("expected")
+        if isinstance(raw_exp, list):
+            expected = [
+                {"label": str(e.get("label", "")),
+                 "locator": str(e.get("locator", "")),
+                 "reason": str(e.get("reason", ""))}
+                for e in raw_exp if isinstance(e, dict)
+            ]
+
+        present_locators = None
+        raw_pres = doc.get("present_locators")
+        if isinstance(raw_pres, list):
+            present_locators = [str(x) for x in raw_pres]
+
+        # map the action word to a kind: analyze / conclude / (default) call_tool
         if action == "conclude":
             return AgentAction(
                 thought=thought,
@@ -306,6 +345,22 @@ class LLMReasoner(Reasoner):
                 finding_statement=finding_statement,
                 finding_evidence_ids=finding_evidence_ids,
                 absence=absence,
+                observations=observations,
+                expected=expected,
+                present_locators=present_locators,
+            )
+
+        if action == "analyze":
+            return AgentAction(
+                thought=thought,
+                kind=ActionKind.ANALYZE,
+                propose=propose,
+                finding_statement=finding_statement,
+                finding_evidence_ids=finding_evidence_ids,
+                absence=absence,
+                observations=observations,
+                expected=expected,
+                present_locators=present_locators,
             )
 
         # Default to CALL_TOOL. If the model gave a bad/missing action or an
@@ -332,4 +387,7 @@ class LLMReasoner(Reasoner):
             finding_statement=finding_statement,
             finding_evidence_ids=finding_evidence_ids,
             absence=absence,
+            observations=observations,
+            expected=expected,
+            present_locators=present_locators,
         )
