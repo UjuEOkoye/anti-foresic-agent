@@ -31,6 +31,7 @@ from engine.case_memory import CaseMemory, CaseMemoryError
 from engine.tool_catalog import ToolCatalog
 from engine.validation_gate import validate_call
 from engine.dual_output import DualOutput
+from engine.self_verification import run_self_verification   # BOX 6.8
 
 
 # --- what the agent can decide to do on a given step -------------------------
@@ -152,8 +153,27 @@ class BoundedInvestigationLoop:
             if action.absence:
                 self.memory.record_absence(**action.absence)
 
-            # terminal: CONCLUDE -> leave the loop
+            # terminal: CONCLUDE -> run the BOX 6.8 self-verification GATE first
             if action.kind == ActionKind.CONCLUDE:
+                # 6.8: check every finding cites real evidence + resolve hypotheses.
+                verification = run_self_verification(self.memory, self.dual.audit)
+                if not verification.verified:
+                    # A finding cites evidence that does not exist (hallucination),
+                    # or a hypothesis is confirmed without grounded support. We do
+                    # NOT allow a clean conclusion: feed the flags back and re-plan.
+                    # (Bounded by the step budget -> ends 'inconclusive' if never fixed:
+                    #  you can never CONCLUDE on ungrounded evidence. That is the guarantee.)
+                    flags_txt = "; ".join(
+                        f"{f.kind}[{f.subject_id}]: {f.detail}" for f in verification.flags
+                    )
+                    self.memory.log("note", f"CONCLUSION BLOCKED by self-verification (6.8): {flags_txt}")
+                    last_observation = (
+                        "CONCLUSION BLOCKED by self-verification (box 6.8). "
+                        "Every finding must cite evidence that exists; fix or drop these "
+                        f"before concluding -> {flags_txt}"
+                    )
+                    continue
+
                 self.memory.log("note", f"CONCLUDE: {action.conclusion}")
                 return InvestigationResult("concluded", action.conclusion,
                                            self.memory, self.dual.audit, step)
