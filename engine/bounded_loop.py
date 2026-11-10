@@ -33,6 +33,7 @@ from engine.validation_gate import validate_call
 from engine.dual_output import DualOutput
 from engine.self_verification import run_self_verification   # BOX 6.8
 from engine.correlation import run_correlation, Observation, ExpectedArtifact   # BOX 6.6
+from engine.ach import run_ach_stage, AltAssessment, AltCategory, Disposition   # BOX 6.7
 
 
 # --- what the agent can decide to do on a given step -------------------------
@@ -67,6 +68,9 @@ class AgentAction:
     observations: list[dict] | None = None         # each {source_id, claim_key, value}
     expected: list[dict] | None = None             # each {label, locator, reason}
     present_locators: list[str] | None = None      # locators actually present in the capture
+
+    # for ACH (box 6.7 / W6): the claim + the agent's verdict on each innocent story.
+    alt_check: dict | None = None                  # {claim, assessments:[{category,disposition,rationale,evidence_ids}]}
 
     # for kind == CONCLUDE:
     conclusion: str = ""
@@ -183,6 +187,36 @@ class BoundedInvestigationLoop:
                     f"Correlation (6.6): {len(cresult.corroborations)} corroboration(s), "
                     f"{len(cresult.conflicts)} conflict(s), {len(cresult.absences)} absence(s) recorded."
                 )
+
+            # ACH (BOX 6.7 / W6): if the agent handed us a claim + its verdicts on
+            # the four innocent explanations, run the devil's-advocate gate. It LOGS
+            # a confidence (high / reduced / blocked) that flows to the report.
+            if action.alt_check and action.alt_check.get("assessments"):
+                _CAT = {
+                    "normal": AltCategory.NORMAL, "normal_behavior": AltCategory.NORMAL,
+                    "another_app": AltCategory.ANOTHER_APP, "another_application": AltCategory.ANOTHER_APP,
+                    "system": AltCategory.SYSTEM_BEHAVIOR, "system_behavior": AltCategory.SYSTEM_BEHAVIOR,
+                    "acquisition": AltCategory.ACQUISITION_LIMIT, "acquisition_limit": AltCategory.ACQUISITION_LIMIT,
+                }
+                _DISP = {
+                    "ruled_out": Disposition.RULED_OUT,
+                    "plausible": Disposition.PLAUSIBLE,
+                    "cannot_exclude": Disposition.CANNOT_EXCLUDE, "cannot_tell": Disposition.CANNOT_EXCLUDE,
+                }
+                assessments = []
+                for a in action.alt_check.get("assessments", []):
+                    cat = _CAT.get(str(a.get("category", "")).strip().lower())
+                    disp = _DISP.get(str(a.get("disposition", "")).strip().lower())
+                    if cat is None or disp is None:
+                        continue   # skip an unrecognized category/disposition
+                    ev = a.get("evidence_ids", [])
+                    ev = [str(x) for x in ev] if isinstance(ev, list) else []
+                    assessments.append(AltAssessment(category=cat, disposition=disp,
+                                                     rationale=str(a.get("rationale", "")),
+                                                     evidence_ids=ev))
+                ach = run_ach_stage(self.memory, str(action.alt_check.get("claim", "")), assessments)
+                note = f"ACH (6.7): {ach.confidence.upper()} — {ach.verdict()}"
+                analysis_note = (analysis_note + " " + note).strip() if analysis_note else note
 
             # THINK: ANALYZE -> a pure reasoning step. The bookkeeping above
             # (hypotheses/findings/absences/correlation) already ran; just loop on.

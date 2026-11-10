@@ -157,6 +157,11 @@ HARD RULES (follow exactly):
   List any artifact you EXPECTED under "expected" plus the locators actually
   present under "present_locators"; anything expected-but-missing is recorded as
   an absence to investigate — NOT proof of deletion.
+- Before you blame ANYTHING on anti-forensic activity, run an "alt_check": for
+  the four innocent explanations (normal, another_app, system, acquisition) give
+  a disposition (ruled_out / plausible / cannot_exclude) with a reason. If ANY
+  stays "plausible", you have NOT ruled out an innocent story — do not call it
+  anti-forensic.
 - NEVER assume, guess, or name a specific application. Reason only from what the
   tools actually return. The identity of any tool is an OUTPUT, never an input.
 - A "finding" is something a tool PROVED. It MUST cite at least one evidence id
@@ -183,6 +188,17 @@ REPLY SCHEMA (include only the keys you need):
   "observations": [ {"source_id": "E0001", "claim_key": "wiped_file", "value": "report.pdf"} ],
   "expected": [ {"label": "usage_stats for the app", "locator": "<path>", "reason": "why expected"} ],
   "present_locators": ["<path actually present>", "<another>"],
+
+  // when action == "analyze" and you are about to blame anti-forensics (ACH, box 6.7):
+  "alt_check": {
+    "claim": "the suspicious thing you want to attribute to anti-forensic activity",
+    "assessments": [
+      {"category": "normal",      "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "...", "evidence_ids": ["E0001"]},
+      {"category": "another_app", "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "..."},
+      {"category": "system",      "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "..."},
+      {"category": "acquisition", "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "..."}
+    ]
+  },
 
   // optional bookkeeping you may attach on ANY step:
   "propose_hypothesis": "a theory to track (unproven)",
@@ -335,6 +351,24 @@ class LLMReasoner(Reasoner):
         if isinstance(raw_pres, list):
             present_locators = [str(x) for x in raw_pres]
 
+        # ACH input (box 6.7): a claim + the agent's verdict on each innocent story.
+        alt_check = None
+        raw_ach = doc.get("alt_check")
+        if isinstance(raw_ach, dict) and isinstance(raw_ach.get("assessments"), list):
+            assessments = []
+            for a in raw_ach["assessments"]:
+                if not isinstance(a, dict):
+                    continue
+                ev = a.get("evidence_ids", [])
+                ev = [str(x) for x in ev] if isinstance(ev, list) else []
+                assessments.append({
+                    "category": str(a.get("category", "")),
+                    "disposition": str(a.get("disposition", "")),
+                    "rationale": str(a.get("rationale", "")),
+                    "evidence_ids": ev,
+                })
+            alt_check = {"claim": str(raw_ach.get("claim", "")), "assessments": assessments}
+
         # map the action word to a kind: analyze / conclude / (default) call_tool
         if action == "conclude":
             return AgentAction(
@@ -348,6 +382,7 @@ class LLMReasoner(Reasoner):
                 observations=observations,
                 expected=expected,
                 present_locators=present_locators,
+                alt_check=alt_check,
             )
 
         if action == "analyze":
@@ -361,6 +396,7 @@ class LLMReasoner(Reasoner):
                 observations=observations,
                 expected=expected,
                 present_locators=present_locators,
+                alt_check=alt_check,
             )
 
         # Default to CALL_TOOL. If the model gave a bad/missing action or an
@@ -390,4 +426,5 @@ class LLMReasoner(Reasoner):
             observations=observations,
             expected=expected,
             present_locators=present_locators,
+            alt_check=alt_check,
         )
