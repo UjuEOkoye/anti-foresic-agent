@@ -147,8 +147,10 @@ class BoundedInvestigationLoop:
                 context += "\n\n" + self.kb.as_prompt_block(cards)
         return context
 
-    def run(self) -> InvestigationResult:
-        last_observation: Any = "Investigation started. No evidence gathered yet."
+    def run(self, initial_observation: str | None = None) -> InvestigationResult:
+        # main.py seeds this with the capture's artifact inventory (real paths) so
+        # the agent does not have to invent paths. Default keeps old behaviour.
+        last_observation: Any = initial_observation or "Investigation started. No evidence gathered yet."
 
         while self.memory.step < self.max_steps:
             step = self.memory.advance_step()
