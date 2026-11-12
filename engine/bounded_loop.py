@@ -120,20 +120,32 @@ class BoundedInvestigationLoop:
 
     def __init__(self, reasoner: Reasoner, catalog: ToolCatalog,
                  max_steps: int = 12, memory: CaseMemory | None = None,
-                 dual: DualOutput | None = None) -> None:
+                 dual: DualOutput | None = None, knowledge_base: Any = None) -> None:
         self.reasoner = reasoner
         self.catalog = catalog
         self.max_steps = max_steps
         self.memory = memory or CaseMemory()
         self.dual = dual or DualOutput()
+        self.kb = knowledge_base          # box 6.2 textbook (optional; None = no KB)
 
     def _build_context(self, last_observation: Any) -> str:
         """What the reasoner sees each step (becomes the LLM prompt later)."""
-        return (
+        context = (
             self.memory.summary_for_prompt()
             + "\n\nAvailable tools:\n" + self.catalog.describe_for_prompt()
             + "\n\nLast observation:\n" + str(last_observation)
         )
+        # BOX 6.2 KNOWLEDGE BASE: consult the general textbook. Build a query from
+        # the agent's current open hypotheses + the last observation, retrieve the
+        # few most relevant cards, and append them — clearly labelled as general
+        # background, NOT case evidence. (No KB attached -> this block is skipped.)
+        if self.kb is not None:
+            query = " ".join(h.statement for h in self.memory.open_hypotheses())
+            query = (query + " " + str(last_observation)).strip()
+            cards = self.kb.retrieve(query, k=3) if query else []
+            if cards:
+                context += "\n\n" + self.kb.as_prompt_block(cards)
+        return context
 
     def run(self) -> InvestigationResult:
         last_observation: Any = "Investigation started. No evidence gathered yet."
