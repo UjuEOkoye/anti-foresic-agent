@@ -93,7 +93,7 @@ def build_reasoner(mode: str, catalog):
 
 # ---- readable report of the result ------------------------------------------
 
-def print_result(res) -> None:
+def print_result(res, verbose: bool = False) -> None:
     line = "=" * 72
     print("\n" + line)
     print("INVESTIGATION RESULT")
@@ -126,6 +126,14 @@ def print_result(res) -> None:
 
     print("\nCONCLUSION:")
     print(f"  {res.reason}")
+
+    if verbose:
+        print("\n" + "-" * 72)
+        print("FULL INVESTIGATION LOG (every step, in order)")
+        print("-" * 72)
+        for e in res.memory.full_log():
+            print(f"  [step {e.step:>2} | {e.kind:<10}] {e.text}")
+
     print(line + "\n")
 
 
@@ -137,6 +145,8 @@ def main() -> None:
     parser.add_argument("--mode", choices=["test", "live"], default="test",
                         help="test = fake reasoner (no GPU); live = real LLM on the VM")
     parser.add_argument("--max-steps", type=int, default=12, help="investigation step budget")
+    parser.add_argument("--verbose", action="store_true",
+                        help="print the full step-by-step investigation log (for diagnosing a run)")
     args = parser.parse_args()
 
     print(f"Mode        : {args.mode}")
@@ -167,7 +177,7 @@ def main() -> None:
     loop = BoundedInvestigationLoop(reasoner, catalog, max_steps=args.max_steps,
                                     memory=memory, dual=dual, knowledge_base=knowledge_base)
     result = loop.run(initial_observation=initial_observation)
-    print_result(result)
+    print_result(result, verbose=args.verbose)
 
 
 if __name__ == "__main__":
