@@ -47,6 +47,10 @@ def scan_capture(folder: str) -> list[dict]:
         if "shared_prefs" in low and name.endswith(".xml"):
             kind = "shared_prefs"
         elif "usage_stats" in low or "usagestats" in low:
+            # keep the informative daily buckets; skip the version marker and the
+            # weekly/monthly/yearly rollups (they aggregate, they don't add detail).
+            if name == "version" or p.parent.name.lower() in ("weekly", "monthly", "yearly"):
+                continue
             kind = "usage_stats"
         elif "logcat" in name or (name.endswith(".txt") and "log" in low):
             kind = "logcat"
