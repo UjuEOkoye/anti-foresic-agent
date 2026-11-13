@@ -23,6 +23,7 @@ correct behavior).
 """
 
 from __future__ import annotations
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -274,12 +275,16 @@ class BoundedInvestigationLoop:
 
                 tool = self.catalog.get(action.tool_name)          # safe: gate passed
                 raw = tool.handler(**action.tool_args)             # 6.5 run the tool
-                bundle = self.dual.handle(action.tool_name, raw,   # 6.5 full raw + projected
-                                          keep_fields=action.keep_fields)
+                # v1: IGNORE the agent's guessed keep_fields. The agent is not told each
+                # tool's OUTPUT field names, so its guesses match nothing and the view
+                # comes back empty ("the file is empty"). Pass None -> the full view
+                # (long values are still length-truncated). Agent-driven keep_fields
+                # returns once we feed the agent each tool's output schema (deferred).
+                bundle = self.dual.handle(action.tool_name, raw, keep_fields=None)
                 ev_id = bundle["evidence"]["evidence_id"]
-                self.memory.log("tool_call", f"{action.tool_name} -> {ev_id}")
-                # OBSERVE: feed back the compact view, tagged with its evidence id
-                last_observation = f"[{ev_id}] {bundle['projected']}"
+                self.memory.log("tool_call", f"{action.tool_name}({action.tool_args}) -> {ev_id}")
+                # OBSERVE: feed back the compact view as readable JSON, tagged with its id
+                last_observation = f"[{ev_id}] " + json.dumps(bundle["projected"], default=str)
                 continue
 
         # budget exhausted -> honest inconclusive (never guess)

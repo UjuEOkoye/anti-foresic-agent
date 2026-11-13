@@ -97,6 +97,11 @@ def project(raw_result: Any, keep_fields: list[str] | None = None,
     # Decide which keys to include.
     if keep_fields is not None:
         selected = {k: raw_result[k] for k in keep_fields if k in raw_result}
+        if not selected:
+            # None of the requested field names exist in this result. Never return an
+            # empty view (that reads to the agent as "the file is empty"); fall back
+            # to the full result instead.
+            selected = dict(raw_result)
     else:
         selected = dict(raw_result)
 
