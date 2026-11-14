@@ -128,11 +128,47 @@ class BoundedInvestigationLoop:
         self.memory = memory or CaseMemory()
         self.dual = dual or DualOutput()
         self.kb = knowledge_base          # box 6.2 textbook (optional; None = no KB)
+        # PINNED CONTEXT (fixes "agent amnesia"): before this, the agent only saw the
+        # LAST observation, so the artifact list vanished after step 1 and each tool
+        # result vanished after the next step. Now both stay visible every step.
+        self._briefing: str = ""                       # task + artifact inventory
+        self._evidence_views: list[tuple[str, str]] = []   # (header, compact view)
+        self._read_paths: set[str] = set()             # artifact paths already read
+
+    # Each pinned evidence view is capped so the prompt cannot grow without limit.
+    # (The FULL raw result is always in the audit store; this is only the agent's view.)
+    MAX_VIEW_CHARS = 2500
+
+    def _inventory_paths(self) -> list[str]:
+        """Artifact paths listed in the briefing (lines that start with '/')."""
+        return [ln.strip() for ln in self._briefing.splitlines() if ln.strip().startswith("/")]
+
+    def _pinned_block(self) -> str:
+        """Briefing + every piece of evidence gathered so far + what is still unread."""
+        if not self._briefing and not self._evidence_views:
+            return ""
+        parts: list[str] = []
+        if self._briefing:
+            parts.append("=== CASE BRIEFING (always available) ===\n" + self._briefing)
+        parts.append(f"=== EVIDENCE GATHERED SO FAR ({len(self._evidence_views)}) ===")
+        if self._evidence_views:
+            for header, view in self._evidence_views:
+                parts.append(header + "\n" + view)
+        else:
+            parts.append("(none yet)")
+        unread = [p for p in self._inventory_paths() if p not in self._read_paths]
+        if self._briefing:
+            parts.append("=== ARTIFACTS NOT YET READ (%d) ===" % len(unread))
+            parts.append("\n".join(unread) if unread else
+                         "(all listed artifacts have been read — analyze and conclude)")
+        return "\n".join(parts)
 
     def _build_context(self, last_observation: Any) -> str:
         """What the reasoner sees each step (becomes the LLM prompt later)."""
+        pinned = self._pinned_block()
         context = (
             self.memory.summary_for_prompt()
+            + ("\n\n" + pinned if pinned else "")
             + "\n\nAvailable tools:\n" + self.catalog.describe_for_prompt()
             + "\n\nLast observation:\n" + str(last_observation)
         )
@@ -152,6 +188,7 @@ class BoundedInvestigationLoop:
         # main.py seeds this with the capture's artifact inventory (real paths) so
         # the agent does not have to invent paths. Default keeps old behaviour.
         last_observation: Any = initial_observation or "Investigation started. No evidence gathered yet."
+        self._briefing = initial_observation or ""     # pin it for EVERY step
 
         while self.memory.step < self.max_steps:
             step = self.memory.advance_step()
@@ -236,7 +273,9 @@ class BoundedInvestigationLoop:
             # THINK: ANALYZE -> a pure reasoning step. The bookkeeping above
             # (hypotheses/findings/absences/correlation) already ran; just loop on.
             if action.kind == ActionKind.ANALYZE:
-                last_observation = analysis_note or "Analysis step recorded; continue investigating."
+                last_observation = analysis_note or (
+                    "Analysis step recorded (no new evidence). Your gathered evidence is "
+                    "listed above. If any artifacts are NOT YET READ, read one next.")
                 continue
 
             # terminal: CONCLUDE -> run the BOX 6.8 self-verification GATE first
@@ -284,7 +323,14 @@ class BoundedInvestigationLoop:
                 ev_id = bundle["evidence"]["evidence_id"]
                 self.memory.log("tool_call", f"{action.tool_name}({action.tool_args}) -> {ev_id}")
                 # OBSERVE: feed back the compact view as readable JSON, tagged with its id
-                last_observation = f"[{ev_id}] " + json.dumps(bundle["projected"], default=str)
+                view = json.dumps(bundle["projected"], default=str)
+                if len(view) > self.MAX_VIEW_CHARS:
+                    view = view[:self.MAX_VIEW_CHARS] + " ...[view truncated; full raw in audit store]"
+                path = str(action.tool_args.get("artifact_path", ""))
+                self._evidence_views.append((f"[{ev_id}] {action.tool_name} on {path}", view))
+                if path:
+                    self._read_paths.add(path)
+                last_observation = f"[{ev_id}] " + view
                 continue
 
         # budget exhausted -> honest inconclusive (never guess)
