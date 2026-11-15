@@ -67,10 +67,35 @@ def _build_llm(model: str | None = None,
     base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     if temperature is None:
         temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
-    return ChatOllama(model=model, base_url=base_url, temperature=temperature)
+    # CONTEXT WINDOW: Ollama's default window is small (2-4k tokens) and it SILENTLY
+    # cuts the START of an over-long prompt — which is where our rules and the JSON
+    # format live. Once the pinned evidence grew, the model lost its instructions and
+    # replied with junk JSON. Ask for a window big enough for the whole prompt.
+    num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+    return ChatOllama(model=model, base_url=base_url, temperature=temperature,
+                      num_ctx=num_ctx)
 
 
 # --- robust JSON extraction --------------------------------------------------
+
+VALID_ACTIONS = ("call_tool", "analyze", "conclude")
+
+
+def is_valid_action_doc(doc: dict | None) -> bool:
+    """
+    A parsed reply only counts as an ACTION if it names one of our three moves,
+    and a call_tool names a tool. This catches the model echoing some other JSON
+    (e.g. a copy of a tool result) — which parses fine but is not an action.
+    """
+    if not isinstance(doc, dict):
+        return False
+    action = str(doc.get("action", "")).strip().lower()
+    if action not in VALID_ACTIONS:
+        return False
+    if action == "call_tool" and not str(doc.get("tool_name", "") or "").strip():
+        return False
+    return True
+
 
 def extract_first_json_object(text: str) -> dict | None:
     """
@@ -270,28 +295,35 @@ class LLMReasoner(Reasoner):
         text = self._ask(prompt)
         self.last_raw_reply = text
         doc = extract_first_json_object(text)
+        if not is_valid_action_doc(doc):
+            doc = None          # parsed JSON that is not an action -> repair it
 
         tries = 0
         while doc is None and tries < self.max_repairs:
             tries += 1
             repair = (
                 prompt
-                + "\n\nYour previous reply was NOT a single valid JSON object:\n"
+                + "\n\nYour previous reply was NOT a valid action:\n"
                 + text[:1000]
-                + "\n\nReturn ONLY one JSON object — no prose, no markdown fences."
+                + '\n\nReturn ONLY one JSON object whose "action" is one of '
+                + '"call_tool" (with a "tool_name"), "analyze", or "conclude". '
+                + "No prose, no markdown fences, do not copy evidence JSON."
             )
             text = self._ask(repair)
             self.last_raw_reply = text
             doc = extract_first_json_object(text)
+            if not is_valid_action_doc(doc):
+                doc = None
 
         if doc is None:
-            # Honest, bounded failure: stop rather than loop or crash.
-            # (Future improvement: feed the parse error back as an observation
-            #  and let the loop re-plan — noted in the deferred list.)
+            # Still no valid action after the repair. Do NOT end the investigation
+            # (one bad reply used to stop the whole run). Return a no-op ANALYZE so
+            # the loop re-plans on the next step; the step budget still bounds it.
+            # A snippet of the bad reply goes into the log so failures are diagnosable.
+            snippet = " ".join(text.split())[:200]
             return AgentAction(
-                thought="planner produced no valid JSON after repair",
-                kind=ActionKind.CONCLUDE,
-                conclusion="planner_error: could not obtain a valid JSON action",
+                thought=f"INVALID REPLY (no valid action after repair): {snippet}",
+                kind=ActionKind.ANALYZE,
             )
 
         return self._action_from_doc(doc)
