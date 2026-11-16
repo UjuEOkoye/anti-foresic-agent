@@ -175,7 +175,8 @@ def main() -> None:
 
     reasoner = build_reasoner(args.mode, catalog)
     loop = BoundedInvestigationLoop(reasoner, catalog, max_steps=args.max_steps,
-                                    memory=memory, dual=dual, knowledge_base=knowledge_base)
+                                    memory=memory, dual=dual, knowledge_base=knowledge_base,
+                                    progress=True)
     result = loop.run(initial_observation=initial_observation)
     print_result(result, verbose=args.verbose)
 
