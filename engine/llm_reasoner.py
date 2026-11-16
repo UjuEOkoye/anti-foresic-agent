@@ -45,6 +45,7 @@ ENFORCE this regardless of what the model says — the prompt asks, the code che
 
 from __future__ import annotations
 import json
+import re
 import os
 from typing import Any
 
@@ -79,6 +80,23 @@ def _build_llm(model: str | None = None,
 # --- robust JSON extraction --------------------------------------------------
 
 VALID_ACTIONS = ("call_tool", "analyze", "conclude")
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def strip_thinking(text: str) -> str:
+    """
+    Reasoning models (e.g. Qwen3) may write their private reasoning inside
+    <think> ... </think> BEFORE the answer. That reasoning can contain braces, so
+    the JSON extractor could grab a half-formed {...} from inside it. Remove the
+    block and keep only the answer. (An unclosed <think> = reply cut off -> keep
+    whatever follows it, usually nothing, which triggers the repair retry.)
+    """
+    text = _THINK_BLOCK.sub("", text)
+    if "<think>" in text.lower():
+        text = text[text.lower().rfind("<think>") + len("<think>"):]
+        text = text.split("</think>")[-1]
+    return text.strip()
 
 
 def is_valid_action_doc(doc: dict | None) -> bool:
@@ -273,10 +291,11 @@ class LLMReasoner(Reasoner):
         return self._llm
 
     def _ask(self, prompt: str) -> str:
-        """Send one prompt, return the reply text."""
+        """Send one prompt, return the reply text (with any <think> block removed)."""
         reply = self.llm.invoke(prompt)
         content = getattr(reply, "content", reply)
-        return content if isinstance(content, str) else str(content)
+        text = content if isinstance(content, str) else str(content)
+        return strip_thinking(text)
 
     # -- the prompt -----------------------------------------------------------
 

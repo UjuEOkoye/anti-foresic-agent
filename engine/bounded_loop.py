@@ -24,6 +24,7 @@ correct behavior).
 
 from __future__ import annotations
 import json
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -121,13 +122,15 @@ class BoundedInvestigationLoop:
 
     def __init__(self, reasoner: Reasoner, catalog: ToolCatalog,
                  max_steps: int = 12, memory: CaseMemory | None = None,
-                 dual: DualOutput | None = None, knowledge_base: Any = None) -> None:
+                 dual: DualOutput | None = None, knowledge_base: Any = None,
+                 progress: bool = False) -> None:
         self.reasoner = reasoner
         self.catalog = catalog
         self.max_steps = max_steps
         self.memory = memory or CaseMemory()
         self.dual = dual or DualOutput()
         self.kb = knowledge_base          # box 6.2 textbook (optional; None = no KB)
+        self.progress = progress          # print one live line per step (so a slow run is visibly alive)
         # PINNED CONTEXT (fixes "agent amnesia"): before this, the agent only saw the
         # LAST observation, so the artifact list vanished after step 1 and each tool
         # result vanished after the next step. Now both stay visible every step.
@@ -195,7 +198,15 @@ class BoundedInvestigationLoop:
 
             # REASON (6.2 + 6.3)
             context = self._build_context(last_observation)
+            t0 = time.time()
+            if self.progress:
+                print(f"[step {step}/{self.max_steps}] thinking... "
+                      f"(prompt ~{len(context) // 4} tokens)", flush=True)
             action = self.reasoner.next_action(context)
+            if self.progress:
+                what = action.kind.value + (f" {action.tool_name}" if action.tool_name else "")
+                print(f"[step {step}/{self.max_steps}] -> {what}  ({time.time() - t0:.0f}s)",
+                      flush=True)
             self.memory.log("note", f"THOUGHT: {action.thought}")
 
             # optional: add a hypothesis (6.2)

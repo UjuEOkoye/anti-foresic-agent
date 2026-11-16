@@ -57,3 +57,14 @@ assert "OLLAMA_NUM_CTX" in inspect.getsource(_build_llm) and "num_ctx" in inspec
 print("  OK")
 
 print("\nALL REPLY-VALIDATION TESTS PASSED")
+print("\nTEST 5 — Qwen3 <think> block is stripped before reading the JSON")
+from engine.llm_reasoner import strip_thinking
+r = LLMReasoner(cat, llm=FakeLLM([
+    '<think>The file has {"weird": braces} in it. I should read logcat.</think>\n'
+    '{"thought":"read logcat","action":"call_tool","tool_name":"read_logcat","tool_args":{"artifact_path":"/l"}}'
+]))
+a = r.next_action("state")
+assert a.kind == ActionKind.CALL_TOOL and a.tool_name == "read_logcat", a
+assert strip_thinking("no think here {}") == "no think here {}"
+print("  OK")
+print("ALL REPLY-VALIDATION TESTS PASSED (incl. Qwen3 thinking)")
