@@ -214,10 +214,16 @@ HARD RULES (follow exactly):
   without the technique having run — if ANY stays plausible, do not call it
   anti-forensic. Run separate alt_checks on side observations (e.g. an absence)
   only if you intend to use them as evidence.
-- If the alt_check on your main claim CLEARS, your conclusion must state that
-  the technique was detected, with its confidence (high, or reduced plus what
-  could not be excluded). Do not conclude "inconclusive" when the main claim
-  cleared.
+- When you conclude, give a "verdict" ("detected", "not_detected" or
+  "inconclusive"), the "category" (artifact_wiping / trail_obfuscation /
+  data_hiding / presence_installation, or "unclassified" if the evidence shows an
+  anti-forensic behaviour that fits none of these) and the "evidence_ids" it
+  rests on. Never force a known category onto behaviour that does not fit it.
+  You do NOT set the confidence: the system computes it from your LATEST
+  alt_check. A "detected" verdict is REFUSED unless your latest alt_check on the
+  main claim CLEARED. If it is blocked, run a new alt_check that answers each
+  alternative with evidence, or conclude "inconclusive".
+  Do not conclude "inconclusive" when the main claim cleared.
 - NEVER assume, guess, or name a specific application. Reason only from what the
   tools actually return. The identity of any tool is an OUTPUT, never an input.
 - A "finding" is something a tool PROVED. It MUST cite at least one evidence id
@@ -263,7 +269,10 @@ REPLY SCHEMA (include only the keys you need):
                "note": "..." },
 
   // when action == "conclude":
-  "conclusion": "your overall conclusion, incl. 'inconclusive' if the evidence is thin"
+  "verdict": "detected" | "not_detected" | "inconclusive",
+  "category": "artifact_wiping" | "trail_obfuscation" | "data_hiding" | "presence_installation" | "unclassified",
+  "evidence_ids": ["E0001", "E0002"],
+  "conclusion": "a short explanation in your own words (the verdict fields above are what count)"
 }
 """
 
@@ -441,6 +450,10 @@ class LLMReasoner(Reasoner):
                 thought=thought,
                 kind=ActionKind.CONCLUDE,
                 conclusion=str(doc.get("conclusion", "") or "").strip(),
+                verdict=str(doc.get("verdict", "") or "").strip().lower(),
+                category=str(doc.get("category", "") or "").strip().lower(),
+                conclusion_evidence_ids=([str(x) for x in doc.get("evidence_ids", [])]
+                                         if isinstance(doc.get("evidence_ids"), list) else []),
                 propose=propose,
                 finding_statement=finding_statement,
                 finding_evidence_ids=finding_evidence_ids,

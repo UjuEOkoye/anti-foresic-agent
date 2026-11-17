@@ -75,7 +75,10 @@ class AgentAction:
     alt_check: dict | None = None                  # {claim, assessments:[{category,disposition,rationale,evidence_ids}]}
 
     # for kind == CONCLUDE:
-    conclusion: str = ""
+    conclusion: str = ""                           # the model's own explanation (prose)
+    verdict: str = ""                              # "detected" | "not_detected" | "inconclusive"
+    category: str = ""                             # e.g. "artifact_wiping" (required for "detected")
+    conclusion_evidence_ids: list[str] = field(default_factory=list)  # evidence the verdict rests on
 
 
 @dataclass
@@ -86,6 +89,27 @@ class InvestigationResult:
     memory: CaseMemory     # the full case notebook (hypotheses, findings, absences, log)
     audit: Any             # the AuditStore holding every full-raw result
     steps_used: int
+    # STRUCTURED VERDICT (Fix 3, 2026-11-17). Set by CODE, not by the model's prose:
+    verdict: str = "inconclusive"        # detected | not_detected | inconclusive
+    category: str = ""                   # PROVISIONAL SoK category when detected (box 7 finalises)
+    confidence: str = "n/a"              # from the ACH gate (6.7): high | reduced | n/a
+    evidence_ids: list = field(default_factory=list)
+    ach_claim: str = ""                  # the claim whose ACH result set the confidence
+    explanation: str = ""                # the model's own words (never sets the verdict)
+
+
+# Verdicts and categories the conclusion may use (SoK categories in scope).
+VERDICTS = ("detected", "not_detected", "inconclusive")
+DETECTION_CATEGORIES = {
+    "artifact_wiping": "artifact_wiping", "aw": "artifact_wiping",
+    "trail_obfuscation": "trail_obfuscation", "to": "trail_obfuscation",
+    "data_hiding": "data_hiding", "dh": "data_hiding",
+    "presence_installation": "presence_installation", "pia": "presence_installation",
+    # Pipeline box 7 allows "other-supported / Unknown-Unclassified": an anti-forensic
+    # behaviour the evidence supports but that fits no known category. Needed for
+    # RQ3 (behaviours not in the knowledge base) — never force a known label.
+    "unclassified": "unclassified", "unknown": "unclassified", "other": "unclassified",
+}
 
 
 # --- the reasoner seam -------------------------------------------------------
@@ -131,6 +155,7 @@ class BoundedInvestigationLoop:
         self.dual = dual or DualOutput()
         self.kb = knowledge_base          # box 6.2 textbook (optional; None = no KB)
         self.progress = progress          # print one live line per step (so a slow run is visibly alive)
+        self._last_ach: Any = None        # latest ACH (6.7) result -> sets the verdict's confidence
         # PINNED CONTEXT (fixes "agent amnesia"): before this, the agent only saw the
         # LAST observation, so the artifact list vanished after step 1 and each tool
         # result vanished after the next step. Now both stay visible every step.
@@ -141,6 +166,13 @@ class BoundedInvestigationLoop:
     # Each pinned evidence view is capped so the prompt cannot grow without limit.
     # (The FULL raw result is always in the audit store; this is only the agent's view.)
     MAX_VIEW_CHARS = 2500
+
+    def _evidence_exists(self, evidence_id: str) -> bool:
+        try:
+            self.dual.audit.get(evidence_id)
+            return True
+        except KeyError:
+            return False
 
     def _inventory_paths(self) -> list[str]:
         """Artifact paths listed in the briefing (lines that start with '/')."""
@@ -278,6 +310,7 @@ class BoundedInvestigationLoop:
                                                      rationale=str(a.get("rationale", "")),
                                                      evidence_ids=ev))
                 ach = run_ach_stage(self.memory, str(action.alt_check.get("claim", "")), assessments)
+                self._last_ach = ach      # the BINDING gate for a "detected" verdict (Fix 3)
                 note = f"ACH (6.7): {ach.confidence.upper()} — {ach.verdict()}"
                 analysis_note = (analysis_note + " " + note).strip() if analysis_note else note
 
@@ -289,8 +322,51 @@ class BoundedInvestigationLoop:
                     "listed above. If any artifacts are NOT YET READ, read one next.")
                 continue
 
-            # terminal: CONCLUDE -> run the BOX 6.8 self-verification GATE first
+            # terminal: CONCLUDE -> (a) structured verdict + BINDING ACH gate, then (b) 6.8
             if action.kind == ActionKind.CONCLUDE:
+                # (a) FIX 3 (2026-11-17). Live run #3: every ACH on the main claim was
+                # BLOCKED, yet the model wrote "high confidence ... no plausible
+                # alternatives remain". The model's prose must never set the verdict or
+                # its confidence. The model STATES a verdict; this code decides whether
+                # it may stand, and the confidence comes from the ACH gate alone.
+                verdict = (action.verdict or "").strip().lower()
+                if verdict not in VERDICTS:
+                    self.memory.log("note", f"No valid verdict given ({action.verdict!r}) "
+                                            f"-> recorded as 'inconclusive' (conservative default).")
+                    verdict = "inconclusive"
+                category = DETECTION_CATEGORIES.get((action.category or "").strip().lower(), "")
+                ev_ids = [str(e) for e in (action.conclusion_evidence_ids or [])]
+                confidence, ach_claim = "n/a", ""
+
+                if verdict == "detected":
+                    problems: list[str] = []
+                    ach = self._last_ach
+                    if ach is None:
+                        problems.append("no alt_check has been run on the main claim")
+                    elif not ach.clears:
+                        problems.append(f"the latest alt_check ('{ach.claim}') is {ach.verdict()}")
+                    if not category:
+                        problems.append(f"category {action.category!r} is not one of "
+                                        f"artifact_wiping / trail_obfuscation / data_hiding / "
+                                        f"presence_installation / unclassified")
+                    if not ev_ids:
+                        problems.append("no evidence_ids were given for the verdict")
+                    unknown = [e for e in ev_ids if not self._evidence_exists(e)]
+                    if unknown:
+                        problems.append(f"evidence ids not in the audit store: {unknown}")
+                    if problems:
+                        msg = "; ".join(problems)
+                        self.memory.log("note", f"CONCLUSION REFUSED by ACH gate (6.7): {msg}")
+                        last_observation = (
+                            "CONCLUSION REFUSED (box 6.7 gate). A 'detected' verdict needs a "
+                            "CLEARING alt_check on the main claim, a valid category and real "
+                            f"evidence ids. Problem(s): {msg}. Either run a new alt_check on the "
+                            "main claim that addresses each alternative with evidence, or "
+                            "conclude with verdict 'inconclusive'.")
+                        continue
+                    confidence, ach_claim = ach.confidence, ach.claim
+
+                # (b) BOX 6.8 self-verification GATE
                 # 6.8: check every finding cites real evidence + resolve hypotheses.
                 verification = run_self_verification(self.memory, self.dual.audit)
                 if not verification.verified:
@@ -310,9 +386,20 @@ class BoundedInvestigationLoop:
                     )
                     continue
 
-                self.memory.log("note", f"CONCLUDE: {action.conclusion}")
-                return InvestigationResult("concluded", action.conclusion,
-                                           self.memory, self.dual.audit, step)
+                # The headline is BUILT BY CODE from the gated fields; the model's prose
+                # is kept separately as its explanation.
+                if verdict == "detected":
+                    reason = (f"VERDICT: DETECTED — {category} | confidence: {confidence.upper()} "
+                              f"(set by ACH 6.7 on: '{ach_claim}') | evidence: {', '.join(ev_ids)}")
+                else:
+                    reason = f"VERDICT: {verdict.upper()}" + (
+                        f" | evidence: {', '.join(ev_ids)}" if ev_ids else "")
+                self.memory.log("note", f"CONCLUDE: {reason}")
+                self.memory.log("note", f"EXPLANATION (model): {action.conclusion}")
+                return InvestigationResult("concluded", reason, self.memory, self.dual.audit, step,
+                                           verdict=verdict, category=category if verdict == "detected" else "",
+                                           confidence=confidence, evidence_ids=ev_ids,
+                                           ach_claim=ach_claim, explanation=action.conclusion)
 
             # ACT: CALL_TOOL  (6.4 gate -> 6.5 execute + dual output)
             if action.kind == ActionKind.CALL_TOOL:

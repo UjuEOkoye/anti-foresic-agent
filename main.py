@@ -175,8 +175,16 @@ def print_result(res, verbose: bool = False) -> None:
     if not absences:
         print("  (none)")
 
-    print("\nCONCLUSION:")
-    print(f"  {res.reason}")
+    print("\nCONCLUSION (verdict + confidence set by the gates, not by the model):")
+    print(f"  verdict    : {getattr(res, 'verdict', 'inconclusive')}")
+    if getattr(res, "category", ""):
+        print(f"  category   : {res.category}")
+    print(f"  confidence : {getattr(res, 'confidence', 'n/a')}"
+          + (f"   (from ACH on: '{res.ach_claim}')" if getattr(res, "ach_claim", "") else ""))
+    if getattr(res, "evidence_ids", None):
+        print(f"  evidence   : {', '.join(res.evidence_ids)}")
+    if getattr(res, "explanation", ""):
+        print(f"  explanation (model's words): {res.explanation}")
 
     if verbose:
         print("\n" + "-" * 72)
