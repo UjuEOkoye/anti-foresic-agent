@@ -74,4 +74,44 @@ for name in ("androideraser", "cbinnovations", "shredder", "ccleaner", "file shr
 print("  OK")
 
 os.unlink(tmp.name)
+
+print("TEST 5 — a 'hits' file whose lines carry a long prefix is still understood")
+# Real 02_logcat_hits_afterwipe.txt: 27 lines all collapsed into ONE template,
+# because every line starts with the same long prefix (e.g. the source file path
+# from the search tool) and the logcat line was never recognised.
+prefix = r"C:\AndroidForensicsProject\CleanerScope\captures\AndroidEraser\PhaseB\01_logcat_full_dump_afterwipe.txt"
+hits = [f"{prefix}:{1000 + k}:05-13 16:20:01.{k:03d}  1234  1250 I System.out: "
+        f"Clearing DocumentFile: /storage/emulated/0/Documents/file_{k}.pdf" for k in range(20)]
+hits += [f"{prefix}:{2000 + k}:05-13 16:21:0{k}.000  1234  1234 I System.out: Wipe pass {k} complete"
+         for k in range(3)]
+h = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+h.write("\n".join(hits)); h.close()
+ov = _read_logcat(h.name)["overview"]
+print("  distinct templates:", ov["distinct_templates"], "| tags:", ov["top_tags"])
+print("  file_path_templates:", ov["file_path_templates"])
+assert ov["distinct_templates"] >= 2, "prefix still hides the logcat lines"
+assert ov["top_tags"][0]["tag"] == "System.out"
+assert ov["file_path_templates"][0]["template"].startswith("System.out: Clearing DocumentFile: <path>")
+assert ov["file_path_templates"][0]["count"] == 20
+os.unlink(h.name)
+print("  OK")
+
+print("TEST 6 — file names with spaces merge into ONE template (real dump split 58 into 4)")
+names = (["a.jpg"] * 18
+         + [f"WhatsApp Image 2024-05-0{k % 9 + 1} at 10.20.{k:02d} ({k}).jpeg" for k in range(14)]
+         + [f"Screenshot 2024-05-01 1015{k:02d}.png" for k in range(10)]
+         + [f"photo ({k}).jpg" for k in range(8)])
+sp = [f"05-13 16:20:01.{k:03d}  1234  1250 I System.out: Clearing DocumentFile: "
+      f"/storage/emulated/0/Pictures/{n}" for k, n in enumerate(names)]
+sp += ["05-13 16:20:02.000  1041  1041 I chatty  : uid=1041(audioserver) "
+       "/system/bin/audioserver expire 3 lines"] * 5
+f6 = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+f6.write("\n".join(sp)); f6.close()
+pt = _read_logcat(f6.name)["overview"]["file_path_templates"]
+print("  ", pt)
+assert pt[0] == {"template": "System.out: Clearing DocumentFile: <path>", "count": 50}
+assert any(t["template"].endswith("<path> expire <n> lines") for t in pt)   # system line unchanged
+os.unlink(f6.name)
+print("  OK")
+
 print("\nALL FIX-2 (LOGCAT OVERVIEW) TESTS PASSED")

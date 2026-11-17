@@ -69,9 +69,22 @@ _TEMPLATE_MAX_LEN = 100
 # Standard logcat line shapes (no app knowledge — just the log format):
 #   threadtime: "05-13 16:20:01.200  1234  1250 D Tag: message"
 #   brief     : "D/Tag( 1234): message"
+# NOT anchored to the start of the line: exported "hits" files often carry a
+# prefix before the logcat line (e.g. "C:\\...\\dump.txt:123:" from a search
+# tool). Matching anywhere finds the real logcat line inside such a prefix.
 _THREADTIME_RE = re.compile(
-    r"^\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+\s+\d+\s+\d+\s+[VDIWEF]\s+([^:]+?)\s*:\s?(.*)$")
-_BRIEF_RE = re.compile(r"^[VDIWEF]/([^(:]+?)\s*\(\s*\d+\):\s?(.*)$")
+    r"\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+\s+\d+\s+\d+\s+[VDIWEF]\s+([^:]+?)\s*:\s?(.*)$")
+_BRIEF_RE = re.compile(r"(?:^|\s)[VDIWEF]/([^(:]+?)\s*\(\s*\d+\):\s?(.*)$")
+# For TEMPLATES only: a file name may contain spaces ("WhatsApp Image 2024-05-01
+# at 10.20.30 (1).jpeg"). _PATH_RE stops at the first space, so such lines split
+# into many templates. This variant lets the path run on, across spaces, up to the
+# nearest token that ends in a file extension containing a letter (".jpeg", not
+# ".30"). If no such token follows, it is just the plain path (e.g. "chatty ...
+# /system/bin/audioserver expire 3 lines" is unchanged). Generic path syntax only.
+_TEMPLATE_PATH_RE = re.compile(
+    _PATH_RE.pattern
+    + r"(?:\s+[^\s\"'<>|]+)*?\.(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{1,5}(?=\s|$)"
+)
 _HEX_RE = re.compile(r"\b0x[0-9a-fA-F]+\b|\b[0-9a-fA-F]{8,}\b")
 _NUM_RE = re.compile(r"\d+")
 _PATH_TOKEN = "<path>"
@@ -80,7 +93,7 @@ _PATH_TOKEN = "<path>"
 def _split_tag(line: str) -> tuple[str, str]:
     """Return (tag, message) for a standard logcat line, else ("", line)."""
     for rx in (_THREADTIME_RE, _BRIEF_RE):
-        m = rx.match(line)
+        m = rx.search(line)
         if m:
             return m.group(1).strip(), m.group(2)
     return "", line
@@ -88,7 +101,8 @@ def _split_tag(line: str) -> tuple[str, str]:
 
 def _template(tag: str, message: str) -> str:
     """Blank out the parts that vary (paths, hex ids, numbers) so similar lines group."""
-    msg = _PATH_RE.sub(_PATH_TOKEN, message)
+    msg = _TEMPLATE_PATH_RE.sub(_PATH_TOKEN, message)   # file names with spaces first
+    msg = _PATH_RE.sub(_PATH_TOKEN, msg)                  # then any remaining plain paths
     msg = _HEX_RE.sub("<id>", msg)
     msg = _NUM_RE.sub("<n>", msg)
     msg = " ".join(msg.split())
