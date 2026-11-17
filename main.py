@@ -16,6 +16,7 @@ Examples:
 from __future__ import annotations
 import argparse
 import os
+import re
 from pathlib import Path
 
 from engine.bounded_loop import (
@@ -24,10 +25,45 @@ from engine.bounded_loop import (
 from engine.case_memory import CaseMemory
 from engine.dual_output import DualOutput
 from tools.registry import build_catalog
+from tools.read_logcat import _decode_log_bytes
 from knowledge_base import build_knowledge_base
 
 
 # ---- box 3 (lite): scan the capture folder for recognised artifacts ----------
+
+# ---- primary artifacts only (2026-11-17) --------------------------------------
+# A capture folder can also hold files an ANALYST made from the evidence — e.g. a
+# "hits" file of lines copied out of the logcat dump by a search tool. Such a file
+# is not device evidence: (1) the agent would treat the copied lines as a second,
+# independent source and "corroborate" a fact with itself; (2) it reveals what a
+# human already chose to search for. Rule: the agent receives only PRIMARY artifacts
+# the device produced. Detected by CONTENT, not by file name: a search-tool export
+# prefixes each copied line with "<source file>:<line number>:" (or "<line number>:").
+_COPIED_LINE_RE = re.compile(
+    r"^(?:.{0,400}?[\\/][^\\/:]+\.[A-Za-z0-9]{1,6}:\d+:|\d+:)\s*\d\d-\d\d\s+\d\d:\d\d:\d\d"
+)
+
+
+def derived_reason(path: Path) -> str:
+    """
+    Return a reason string if this text file is an analyst-derived extract (most
+    lines carry a "<file>:<line>:" copy prefix), else "" (a primary artifact).
+    Reads only the first 256 KB. Never raises.
+    """
+    try:
+        with open(path, "rb") as fh:
+            text = _decode_log_bytes(fh.read(256 * 1024))
+    except Exception:
+        return ""
+    sample = [ln for ln in text.splitlines() if ln.strip()][:50]
+    if not sample:
+        return ""
+    copied = sum(1 for ln in sample if _COPIED_LINE_RE.match(ln))
+    if copied / len(sample) >= 0.5:
+        return (f"analyst-derived extract: {copied}/{len(sample)} sampled lines carry a "
+                f"'<source file>:<line>:' copy prefix (not device-produced)")
+    return ""
+
 
 def scan_capture(folder: str) -> list[dict]:
     """
@@ -56,11 +92,26 @@ def scan_capture(folder: str) -> list[dict]:
             kind = "logcat"
         else:
             continue
-        inventory.append({"type": kind, "path": str(p)})
+        item = {"type": kind, "path": str(p)}
+        if kind == "logcat":
+            reason = derived_reason(p)
+            if reason:
+                item["excluded"] = reason     # listed for transparency, never given to the agent
+        inventory.append(item)
     return inventory
 
 
+def format_excluded(inventory: list[dict]) -> str:
+    """The files left out of the agent's input, with why (shown to the human only)."""
+    excl = [i for i in inventory if i.get("excluded")]
+    if not excl:
+        return "(none)"
+    return "\n".join(f"- {i['path']}\n    reason: {i['excluded']}" for i in excl)
+
+
 def format_inventory(inventory: list[dict]) -> str:
+    """The PRIMARY artifacts given to the agent (excluded files are left out)."""
+    inventory = [i for i in inventory if not i.get("excluded")]
     if not inventory:
         return "(no recognised artifacts found in the capture folder)"
     by_type: dict[str, list[str]] = {}
@@ -163,8 +214,10 @@ def main() -> None:
 
     # box 3 (lite): what artifacts are actually here?
     inventory = scan_capture(args.case)
-    print("\nArtifact inventory:")
+    print("\nArtifact inventory (primary artifacts given to the agent):")
     print(format_inventory(inventory))
+    print("\nExcluded from the agent's input (not device-produced):")
+    print(format_excluded(inventory))
 
     initial_observation = (
         "You are investigating ONE preserved Android capture for possible anti-forensic "
