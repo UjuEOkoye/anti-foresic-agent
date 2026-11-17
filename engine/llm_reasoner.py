@@ -51,6 +51,7 @@ from typing import Any
 
 from engine.bounded_loop import Reasoner, AgentAction, ActionKind
 from engine.tool_catalog import ToolCatalog
+from engine.ach import describe_alternatives_for_prompt
 
 
 # --- model connection (same convention as the lab's lang-graph-basic) --------
@@ -200,11 +201,23 @@ HARD RULES (follow exactly):
   List any artifact you EXPECTED under "expected" plus the locators actually
   present under "present_locators"; anything expected-but-missing is recorded as
   an absence to investigate — NOT proof of deletion.
-- Before you blame ANYTHING on anti-forensic activity, run an "alt_check": for
-  the four innocent explanations (normal, another_app, system, acquisition) give
-  a disposition (ruled_out / plausible / cannot_exclude) with a reason. If ANY
-  stays "plausible", you have NOT ruled out an innocent story — do not call it
-  anti-forensic.
+- You detect whether an anti-forensic technique was EXECUTED on this device —
+  NOT why. The user's motive or intent is OUT OF SCOPE (that is for the
+  investigator). Never mark an alternative "plausible" because the user might
+  have had a legitimate reason.
+- Before you attribute anything to anti-forensic activity, run an "alt_check" on
+  your MAIN claim, phrased as an execution claim, e.g. "a secure file-wiping
+  operation was executed on this device". For each of the four alternatives
+  (listed under ALTERNATIVE QUESTIONS below) answer that exact question with a
+  disposition (ruled_out / plausible / cannot_exclude), a reason, and the
+  evidence ids that support it. "plausible" means the EVIDENCE could really exist
+  without the technique having run — if ANY stays plausible, do not call it
+  anti-forensic. Run separate alt_checks on side observations (e.g. an absence)
+  only if you intend to use them as evidence.
+- If the alt_check on your main claim CLEARS, your conclusion must state that
+  the technique was detected, with its confidence (high, or reduced plus what
+  could not be excluded). Do not conclude "inconclusive" when the main claim
+  cleared.
 - NEVER assume, guess, or name a specific application. Reason only from what the
   tools actually return. The identity of any tool is an OUTPUT, never an input.
 - A "finding" is something a tool PROVED. It MUST cite at least one evidence id
@@ -234,7 +247,7 @@ REPLY SCHEMA (include only the keys you need):
 
   // when action == "analyze" and you are about to blame anti-forensics (ACH, box 6.7):
   "alt_check": {
-    "claim": "the suspicious thing you want to attribute to anti-forensic activity",
+    "claim": "an EXECUTION claim, e.g. a secure file-wiping operation was executed on this device",
     "assessments": [
       {"category": "normal",      "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "...", "evidence_ids": ["E0001"]},
       {"category": "another_app", "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "..."},
@@ -300,7 +313,9 @@ class LLMReasoner(Reasoner):
     # -- the prompt -----------------------------------------------------------
 
     def _system_prompt(self) -> str:
-        return f"{_RULES}\n\nTOOLS (the only tools you may call):\n{self._tool_contract}"
+        return (f"{_RULES}\n\nALTERNATIVE QUESTIONS (for alt_check — about the evidence, "
+                f"never about intent):\n{describe_alternatives_for_prompt()}"
+                f"\n\nTOOLS (the only tools you may call):\n{self._tool_contract}")
 
     # -- the one method the loop calls ----------------------------------------
 

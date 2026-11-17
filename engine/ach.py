@@ -48,6 +48,41 @@ REQUIRED_CATEGORIES = [
 ]
 
 
+# WHAT EACH ALTERNATIVE ACTUALLY ASKS (Fix 1, 2026-11-17).
+# Live run #1 showed the model treating "normal" as a question about MOTIVE ("a
+# person might wipe files for ordinary privacy reasons") and so blocking a
+# well-evidenced wipe. That is the wrong question: this system detects whether an
+# anti-forensic technique was EXECUTED, not why. Intent is for the investigator /
+# court. Every alternative is therefore a question about the EVIDENCE: could it
+# exist WITHOUT the claimed technique having actually been executed?
+# Single source of truth: the reasoner renders these into the prompt.
+ALT_CATEGORY_QUESTIONS: dict[AltCategory, str] = {
+    AltCategory.NORMAL: (
+        "Could ordinary use have produced this exact evidence WITHOUT the technique "
+        "being executed? (e.g. the app was only installed or opened and never ran the "
+        "operation; the values are defaults, placeholders, or settings never acted on)"
+    ),
+    AltCategory.ANOTHER_APP: (
+        "Could a DIFFERENT app or component have produced these artifacts, so the "
+        "attribution is wrong? (e.g. the records belong to another package)"
+    ),
+    AltCategory.SYSTEM_BEHAVIOR: (
+        "Could the operating system itself have produced this, with no user-initiated "
+        "anti-forensic operation? (e.g. routine cache eviction, log rotation, reboot)"
+    ),
+    AltCategory.ACQUISITION_LIMIT: (
+        "Could the acquisition/extraction process explain this? (e.g. something looks "
+        "missing only because it was never collected, or a parse/encoding error)"
+    ),
+}
+
+
+def describe_alternatives_for_prompt() -> str:
+    """The four alternative questions, formatted for the reasoner's prompt."""
+    short = {AltCategory.NORMAL: "normal", AltCategory.ANOTHER_APP: "another_app",
+             AltCategory.SYSTEM_BEHAVIOR: "system", AltCategory.ACQUISITION_LIMIT: "acquisition"}
+    return "\n".join(f'  - "{short[c]}": {ALT_CATEGORY_QUESTIONS[c]}' for c in REQUIRED_CATEGORIES)
+
 class Disposition(str, Enum):
     RULED_OUT = "ruled_out"            # evidence excludes this innocent explanation
     PLAUSIBLE = "plausible"            # a viable innocent story remains -> BLOCKS a guilty call
