@@ -95,8 +95,10 @@ STARTER_CARDS: list[KnowledgeCard] = [
         ),
         indicators=[
             "a durable usage timeline still showing an app ran, after the app was removed",
-            "app-private artifacts (config store, recent tasks, snapshots) absent after uninstall/reboot",
             "proof of a run surviving in one artifact while the richer detail is gone from another",
+            "NOTE: app-private artifacts (config store, recent tasks, snapshots) being ABSENT after "
+            "uninstall/reboot is EXPECTED (see the normal uninstall baseline) and is NOT by itself "
+            "evidence of wiping; the evidence is what SURVIVES, not what is gone",
         ],
         keywords=["survive", "survival", "durable", "persist", "uninstall", "reboot",
                   "usagestats", "usage", "recent", "tasks", "snapshots", "destroyed",

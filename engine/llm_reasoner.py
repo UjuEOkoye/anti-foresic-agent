@@ -224,6 +224,11 @@ HARD RULES (follow exactly):
   main claim CLEARED. If it is blocked, run a new alt_check that answers each
   alternative with evidence, or conclude "inconclusive".
   Do not conclude "inconclusive" when the main claim cleared.
+- Logs: read a log file FIRST WITHOUT a pattern to get its overview, then search
+  it with an EXACT phrase copied from one of the overview's templates. Search for
+  BEHAVIOUR (what the lines say happened), never for an app or package name.
+- Re-checking a claim cannot raise its confidence unless you gathered NEW
+  evidence since the previous check; "ruled_out" must cite evidence ids.
 - NEVER assume, guess, or name a specific application. Reason only from what the
   tools actually return. The identity of any tool is an OUTPUT, never an input.
 - A "finding" is something a tool PROVED. It MUST cite at least one evidence id

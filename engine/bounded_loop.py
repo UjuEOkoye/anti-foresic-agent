@@ -98,6 +98,26 @@ class InvestigationResult:
     explanation: str = ""                # the model's own words (never sets the verdict)
 
 
+@dataclass
+class GateState:
+    """
+    The EFFECTIVE result of the alternative-hypothesis check (6.7) that the
+    conclusion gate uses. Normally a copy of the latest ACH result; but if a
+    re-check tried to RAISE confidence without any new evidence, it keeps the
+    earlier (lower) result instead (Fix A).
+    """
+    claim: str
+    clears: bool
+    confidence: str          # "blocked" | "reduced" | "high"
+    summary: str
+
+    def verdict(self) -> str:
+        return self.summary
+
+
+_CONFIDENCE_RANK = {"blocked": 0, "reduced": 1, "high": 2}
+
+
 # Verdicts and categories the conclusion may use (SoK categories in scope).
 VERDICTS = ("detected", "not_detected", "inconclusive")
 DETECTION_CATEGORIES = {
@@ -155,7 +175,8 @@ class BoundedInvestigationLoop:
         self.dual = dual or DualOutput()
         self.kb = knowledge_base          # box 6.2 textbook (optional; None = no KB)
         self.progress = progress          # print one live line per step (so a slow run is visibly alive)
-        self._last_ach: Any = None        # latest ACH (6.7) result -> sets the verdict's confidence
+        self._last_ach: Any = None        # effective ACH (6.7) gate state -> sets the verdict's confidence
+        self._ach_evidence_seen: int = -1 # distinct evidence count when that check ran (Fix A)
         # PINNED CONTEXT (fixes "agent amnesia"): before this, the agent only saw the
         # LAST observation, so the artifact list vanished after step 1 and each tool
         # result vanished after the next step. Now both stay visible every step.
@@ -166,6 +187,14 @@ class BoundedInvestigationLoop:
     # Each pinned evidence view is capped so the prompt cannot grow without limit.
     # (The FULL raw result is always in the audit store; this is only the agent's view.)
     MAX_VIEW_CHARS = 2500
+
+    def _distinct_evidence(self) -> int:
+        """
+        How many DISTINCT pieces of evidence have been gathered, counted by content
+        hash. Re-reading the same file gives the same hash, so it is not 'new'
+        evidence; a new file or a new search result is.
+        """
+        return len({rec["hash"] for rec in getattr(self.dual.audit, "_records", {}).values()})
 
     def _evidence_exists(self, evidence_id: str) -> bool:
         try:
@@ -306,12 +335,39 @@ class BoundedInvestigationLoop:
                         continue   # skip an unrecognized category/disposition
                     ev = a.get("evidence_ids", [])
                     ev = [str(x) for x in ev] if isinstance(ev, list) else []
+                    rationale = str(a.get("rationale", ""))
+                    # FIX A (2026-11-17), rule 1: ruling out an alternative needs EVIDENCE.
+                    # "ruled_out" citing no existing evidence id counts as "cannot_exclude".
+                    if disp == Disposition.RULED_OUT and not any(self._evidence_exists(e) for e in ev):
+                        self.memory.log("ach_detail", f"  {cat.value}: 'ruled_out' cites no existing "
+                                                      f"evidence {ev} -> treated as cannot_exclude")
+                        disp = Disposition.CANNOT_EXCLUDE
+                    # Audit trail (RQ5): every judgment, its reason and its evidence.
+                    self.memory.log("ach_detail", f"  {cat.value}: {disp.value} "
+                                                  f"[{', '.join(ev) or 'no evidence'}] — {rationale}")
                     assessments.append(AltAssessment(category=cat, disposition=disp,
-                                                     rationale=str(a.get("rationale", "")),
-                                                     evidence_ids=ev))
+                                                     rationale=rationale, evidence_ids=ev))
                 ach = run_ach_stage(self.memory, str(action.alt_check.get("claim", "")), assessments)
-                self._last_ach = ach      # the BINDING gate for a "detected" verdict (Fix 3)
-                note = f"ACH (6.7): {ach.confidence.upper()} — {ach.verdict()}"
+                gate = GateState(ach.claim, ach.clears, ach.confidence, ach.verdict())
+                # FIX A, rule 2: a re-check may LOWER confidence at any time, but may only
+                # RAISE it if new evidence was gathered since the previous check. Run #4
+                # went BLOCKED -> HIGH in one step with no tool call: only the opinion changed.
+                seen_now = self._distinct_evidence()
+                prev = self._last_ach
+                if (prev is not None and seen_now == self._ach_evidence_seen
+                        and _CONFIDENCE_RANK[gate.confidence] > _CONFIDENCE_RANK[prev.confidence]):
+                    self.memory.log("ach", f"ACH CAPPED: confidence cannot rise from "
+                                           f"{prev.confidence.upper()} to {gate.confidence.upper()} "
+                                           f"without new evidence since the previous check -> stays "
+                                           f"{prev.confidence.upper()}")
+                    gate = GateState(ach.claim, prev.clears, prev.confidence,
+                                     f"{prev.summary} [re-check without new evidence: capped]")
+                self._last_ach = gate     # the BINDING gate for a "detected" verdict (Fix 3)
+                self._ach_evidence_seen = seen_now
+                note = f"ACH (6.7): {gate.confidence.upper()} — {gate.verdict()}"
+                if "capped" in gate.summary:
+                    note += (" To raise confidence, gather NEW evidence (e.g. an artifact or "
+                             "search not yet done) that addresses the remaining alternative.")
                 analysis_note = (analysis_note + " " + note).strip() if analysis_note else note
 
             # THINK: ANALYZE -> a pure reasoning step. The bookkeeping above

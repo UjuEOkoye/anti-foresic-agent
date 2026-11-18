@@ -214,6 +214,17 @@ def _read_logcat(artifact_path, pattern=None, max_matches=_DEFAULT_MAX_MATCHES):
     }
     if not pattern:
         result["overview"] = _overview(lines)
+    else:
+        # FIX B (2026-11-17): live run #4 skipped the overview and searched its own
+        # words ("...|wipe|erase"), so 58 file-clearing lines were never seen. Every
+        # pattern call now ALSO carries a short overview of the file-referencing
+        # message kinds, placed BEFORE the matches so it stays in the agent's view.
+        brief = _overview(lines)["file_path_templates"][:5]
+        result["overview_brief"] = {
+            "file_path_templates": brief,
+            "hint": "message kinds that reference files in this log; search with an exact "
+                    "phrase from one of these templates to retrieve its lines",
+        }
     result["matches"] = matches
     result["file_paths"] = file_paths
     return result
@@ -252,6 +263,8 @@ READ_LOGCAT = ToolSchema(
                   description="unique filesystem paths referenced in the log"),
         FieldSpec(name="overview", field_type=FieldType.OBJECT,
                   description="no-pattern calls only: frequent templates, file-path templates, top tags"),
+        FieldSpec(name="overview_brief", field_type=FieldType.OBJECT,
+                  description="pattern calls: the top file-referencing message templates"),
     ],
     handler=_read_logcat,
 )
