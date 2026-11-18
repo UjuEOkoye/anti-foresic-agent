@@ -233,7 +233,11 @@ HARD RULES (follow exactly):
   that shows why. Your rationale must say only what that quote really shows.
 - Observations for correlation: ONE fact per observation, with the value COPIED
   WORD-FOR-WORD from the evidence (e.g. one observation per file name). Never a
-  summary or a count phrase — paraphrased values are ignored.
+  summary or a count phrase — paraphrased values are ignored. Give the SAME
+  claim_key to the same kind of fact in every source (e.g. "wiped_file" for every
+  file name), so matching values from different sources line up.
+- If a value in your view is cut off ("...[truncated"), do NOT copy the cut text:
+  use search_evidence on that evidence id to find the exact text you need.
 - Never call an artifact missing or absent if it is listed in the inventory and
   you have not read it yet. Read it first.
 - NEVER assume, guess, or name a specific application. Reason only from what the

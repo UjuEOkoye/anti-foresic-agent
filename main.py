@@ -26,6 +26,7 @@ from engine.case_memory import CaseMemory
 from engine.dual_output import DualOutput
 from tools.registry import build_catalog
 from tools.read_logcat import _decode_log_bytes
+from tools.search_evidence import make_search_evidence_tool
 from knowledge_base import build_knowledge_base
 
 
@@ -233,6 +234,10 @@ def main() -> None:
         "with these EXACT paths; do NOT invent paths.\n\n"
         "Available artifacts:\n" + format_inventory(inventory)
     )
+
+    # Fix G: let the agent search inside evidence it has already collected (full raw
+    # record in the audit store), so long values cut off in its view stay reachable.
+    catalog.register(make_search_evidence_tool(dual.audit))
 
     reasoner = build_reasoner(args.mode, catalog)
     loop = BoundedInvestigationLoop(reasoner, catalog, max_steps=args.max_steps,

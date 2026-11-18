@@ -66,7 +66,7 @@ class Corroboration:
 
 @dataclass
 class Conflict:
-    """One claim_key where sources disagree (>= 2 distinct values)."""
+    """One claim_key where two DIFFERENT sources each report one value, and they differ."""
     claim_key: str
     values_by_source: dict[str, str]   # source_id -> the value it reported
 
@@ -108,9 +108,18 @@ class CorrelationResult:
 def correlate(observations: list[Observation]) -> tuple[list[Corroboration], list[Conflict]]:
     """
     Group observations by claim_key. For each key:
-      - a single value backed by >= 2 distinct sources  -> corroboration
-      - >= 2 distinct values (sources disagree)          -> conflict
+      - a value backed by >= 2 distinct sources                  -> corroboration
+      - DIFFERENT sources each reporting ONE value, and those
+        values differ (the sources disagree)                     -> conflict
     Pure grouping + comparison. No interpretation.
+
+    FIX F (2026-11-17): live run #6 logged "CONFLICT on wiped_files" from a SINGLE
+    source — the agent listed many file names under one key, and any key with two
+    or more values was called a conflict. A list from one source is not a
+    disagreement. Rule now: if any source gives several values for a key, the key
+    is MULTI-VALUED (a set, e.g. a list of files) — values shared by >= 2 sources
+    corroborate, and nothing is a conflict. A conflict needs two different sources
+    that each state one value, and the values differ (e.g. two different timezones).
     """
     # claim_key -> { value -> set(source_ids) }
     grouped: dict[str, dict[str, set[str]]] = {}
@@ -127,12 +136,15 @@ def correlate(observations: list[Observation]) -> tuple[list[Corroboration], lis
                 corroborations.append(
                     Corroboration(claim_key=claim_key, value=value, sources=sorted(sources))
                 )
-        # conflict: the same claim_key carries two or more distinct values
-        if len(value_map) >= 2:
-            values_by_source: dict[str, str] = {}
-            for value, sources in value_map.items():
-                for s in sources:
-                    values_by_source[s] = value
+        # which values did each source report for this key?
+        values_per_source: dict[str, set[str]] = {}
+        for value, sources in value_map.items():
+            for src in sources:
+                values_per_source.setdefault(src, set()).add(value)
+        multi_valued = any(len(v) > 1 for v in values_per_source.values())
+        distinct_single = {next(iter(v)) for v in values_per_source.values()}
+        if (not multi_valued and len(values_per_source) >= 2 and len(distinct_single) >= 2):
+            values_by_source = {src: next(iter(v)) for src, v in sorted(values_per_source.items())}
             conflicts.append(Conflict(claim_key=claim_key, values_by_source=values_by_source))
 
     return corroborations, conflicts
