@@ -25,7 +25,8 @@ from engine.tool_schema import ToolSchema, FieldSpec, FieldType
 TOOL = ToolSchema(name="read_sharedprefs", purpose="Read shared_prefs.",
                   args=[FieldSpec("artifact_path", FieldType.STRING, "p", required=True)],
                   output=[FieldSpec("entries", FieldType.OBJECT, "kv")],
-                  handler=lambda artifact_path: {"status": "ok", "entries": {"method": "3-pass overwrite"}})
+                  handler=lambda artifact_path: {"status": "ok", "artifact_path": artifact_path,
+                                                 "entries": {"method": "3-pass overwrite"}})
 def cat():
     c = ToolCatalog(); c.register(TOOL); return c
 
@@ -39,6 +40,7 @@ class FakeLLM:
                  '"category":"artifact_wiping","evidence_ids":["E0001"],"conclusion":"high confidence"}')
 
 READ = '{"thought":"read","action":"call_tool","tool_name":"read_sharedprefs","tool_args":{"artifact_path":"/p.xml"}}'
+READ2 = '{"thought":"new source","action":"call_tool","tool_name":"read_sharedprefs","tool_args":{"artifact_path":"/q.xml"}}'
 CLAIM = "a secure file-wiping operation was executed on this device"
 
 def ach(dispositions):
@@ -76,9 +78,10 @@ assert refusals(res) and "no alt_check" in refusals(res)[0]
 assert res.verdict == "inconclusive"
 print("  OK")
 
-print("TEST 3 — blocked, then re-checked with evidence -> clears; confidence from the GATE")
+print("TEST 3 — blocked, NEW evidence, re-check clears; confidence from the GATE")
 res = run([READ,
            ach(["ruled_out", "ruled_out", "plausible", "ruled_out"]),        # blocked
+           READ2,                                                            # NEW evidence (Fix A)
            ach(["ruled_out", "ruled_out", "ruled_out", "cannot_exclude"]),   # clears, reduced
            conclude(prose="HIGH confidence")])
 print("  status:", res.status, "| verdict:", res.verdict, "| confidence:", res.confidence)
