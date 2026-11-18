@@ -188,6 +188,56 @@ class BoundedInvestigationLoop:
     # (The FULL raw result is always in the audit store; this is only the agent's view.)
     MAX_VIEW_CHARS = 2500
 
+    # ---- Fix D: verbatim checks against the raw evidence -------------------
+    @staticmethod
+    def _norm_text(text: str) -> str:
+        return " ".join(str(text).split()).lower()
+
+    def _evidence_texts(self, evidence_id: str) -> list[str]:
+        """Every string/number value inside one raw evidence record (normalised)."""
+        try:
+            raw = self.dual.audit.get(evidence_id)["raw"]
+        except KeyError:
+            return []
+        out: list[str] = []
+        def walk(v: Any) -> None:
+            if isinstance(v, dict):
+                for k, x in v.items():
+                    out.append(self._norm_text(k)); walk(x)
+            elif isinstance(v, (list, tuple)):
+                for x in v:
+                    walk(x)
+            elif v is not None:
+                out.append(self._norm_text(v))
+        walk(raw)
+        return out
+
+    def _appears_verbatim(self, text: str, evidence_ids: list[str]) -> bool:
+        """True if `text` occurs word-for-word inside a value of any cited evidence."""
+        needle = self._norm_text(text)
+        if len(needle) < 3:
+            return False
+        return any(needle in hay for e in evidence_ids for hay in self._evidence_texts(e))
+
+    # ---- Fix E: no "absence" for an artifact that has not been read ---------
+    def _unread_match(self, location: str) -> str:
+        """
+        If `location` points at (or into a folder holding) an inventory artifact
+        that has NOT been read yet, return that artifact's path; else "".
+        """
+        loc = str(location or "").strip()
+        for cut in ("<", "*"):
+            loc = loc.split(cut)[0]
+        loc = loc.rstrip(". /") if loc.endswith("...") else loc.rstrip("/")
+        if "/" not in loc or len(loc) < 4:
+            return ""
+        for path in self._inventory_paths():
+            if path in self._read_paths:
+                continue
+            if path == loc or path.startswith(loc.rstrip("/") + "/") or path.startswith(loc):
+                return path
+        return ""
+
     def _distinct_evidence(self) -> int:
         """
         How many DISTINCT pieces of evidence have been gathered, counted by content
@@ -285,29 +335,58 @@ class BoundedInvestigationLoop:
                     continue
 
             # optional: record a suspicious absence (6.6 / W1)
+            gate_notes: list[str] = []
             if action.absence:
-                self.memory.record_absence(**action.absence)
+                # FIX E (2026-11-17): live run #5 recorded "usage_stats ... not found" at a
+                # Phase-B path whose file was in the inventory and simply never READ.
+                # Absence must come from looking, not from not looking (W1).
+                unread = self._unread_match(action.absence.get("location", ""))
+                if unread:
+                    msg = (f"ABSENCE REFUSED (W1): '{action.absence.get('looked_for', '')}' at "
+                           f"{action.absence.get('location', '')} — that artifact is in the "
+                           f"inventory and has not been read yet: {unread}. Read it first.")
+                    self.memory.log("note", msg)
+                    gate_notes.append(msg)
+                else:
+                    self.memory.record_absence(**action.absence)
 
             # CORRELATION (BOX 6.6): if the agent handed us facts + expectations,
             # connect the dots (corroborations/conflicts) and compute absences
             # ("missing != deleted"). Deterministic; writes results into memory.
-            analysis_note = ""
+            analysis_note = " ".join(gate_notes)
             if action.observations or action.expected:
-                obs = [
-                    Observation(source_id=str(o.get("source_id", "")),
-                                claim_key=str(o.get("claim_key", "")),
-                                value=str(o.get("value", "")))
-                    for o in (action.observations or [])
-                ]
-                exp = [
-                    ExpectedArtifact(label=str(e.get("label", "")),
-                                     locator=str(e.get("locator", "")),
-                                     reason=str(e.get("reason", "")))
-                    for e in (action.expected or [])
-                ]
+                # FIX D (2026-11-17): run #5 logged a FALSE CONFLICT because the agent
+                # paraphrased the same fact two ways ("9 files listed" vs "Same 9 files
+                # cleared"). The correlator compares values exactly, so every value must
+                # be copied VERBATIM from its source. Values not found word-for-word in
+                # the cited evidence are dropped (and logged), never compared.
+                obs = []
+                for o in (action.observations or []):
+                    sid, val = str(o.get("source_id", "")), str(o.get("value", ""))
+                    if not self._appears_verbatim(val, [sid]):
+                        self.memory.log("note", f"OBSERVATION IGNORED (not verbatim in {sid}): "
+                                                f"{o.get('claim_key', '')}={val[:80]!r}")
+                        gate_notes.append(f"Observation '{o.get('claim_key', '')}' ignored: its value "
+                                          f"is not copied word-for-word from {sid}.")
+                        continue
+                    obs.append(Observation(source_id=sid, claim_key=str(o.get("claim_key", "")),
+                                           value=val))
+                exp = []
+                for e in (action.expected or []):
+                    unread = self._unread_match(str(e.get("locator", "")))
+                    if unread:            # FIX E: present in the inventory, just not read yet
+                        self.memory.log("note", f"EXPECTED-ARTIFACT CHECK SKIPPED (W1): "
+                                                f"{e.get('label', '')} — {unread} is in the "
+                                                f"inventory and not read yet")
+                        gate_notes.append(f"'{e.get('label', '')}' is in the inventory but unread: "
+                                          f"read {unread} before calling it missing.")
+                        continue
+                    exp.append(ExpectedArtifact(label=str(e.get("label", "")),
+                                                locator=str(e.get("locator", "")),
+                                                reason=str(e.get("reason", ""))))
                 present = set(action.present_locators or [])
                 cresult = run_correlation(self.memory, obs, exp, present)
-                analysis_note = (
+                analysis_note = (" ".join(gate_notes) + " " if gate_notes else "") + (
                     f"Correlation (6.6): {len(cresult.corroborations)} corroboration(s), "
                     f"{len(cresult.conflicts)} conflict(s), {len(cresult.absences)} absence(s) recorded."
                 )
@@ -336,15 +415,24 @@ class BoundedInvestigationLoop:
                     ev = a.get("evidence_ids", [])
                     ev = [str(x) for x in ev] if isinstance(ev, list) else []
                     rationale = str(a.get("rationale", ""))
+                    quote = str(a.get("quote", "") or "")
                     # FIX A (2026-11-17), rule 1: ruling out an alternative needs EVIDENCE.
                     # "ruled_out" citing no existing evidence id counts as "cannot_exclude".
                     if disp == Disposition.RULED_OUT and not any(self._evidence_exists(e) for e in ev):
                         self.memory.log("ach_detail", f"  {cat.value}: 'ruled_out' cites no existing "
                                                       f"evidence {ev} -> treated as cannot_exclude")
                         disp = Disposition.CANNOT_EXCLUDE
+                    # FIX D, rule 2: and it must QUOTE that evidence word-for-word, so every
+                    # reason can be checked against the source (run #5 stated a false reason).
+                    elif disp == Disposition.RULED_OUT and not self._appears_verbatim(quote, ev):
+                        self.memory.log("ach_detail", f"  {cat.value}: 'ruled_out' without a verbatim "
+                                                      f"quote from {ev} (quote={quote[:60]!r}) "
+                                                      f"-> treated as cannot_exclude")
+                        disp = Disposition.CANNOT_EXCLUDE
                     # Audit trail (RQ5): every judgment, its reason and its evidence.
                     self.memory.log("ach_detail", f"  {cat.value}: {disp.value} "
-                                                  f"[{', '.join(ev) or 'no evidence'}] — {rationale}")
+                                                  f"[{', '.join(ev) or 'no evidence'}] — {rationale}"
+                                                  + (f' | quote: "{quote}"' if quote else ""))
                     assessments.append(AltAssessment(category=cat, disposition=disp,
                                                      rationale=rationale, evidence_ids=ev))
                 ach = run_ach_stage(self.memory, str(action.alt_check.get("claim", "")), assessments)

@@ -16,7 +16,8 @@ from engine.tool_schema import ToolSchema, FieldSpec, FieldType
 
 
 def _fake_read(artifact_path: str):
-    return {"status": "ok", "artifact_path": artifact_path, "value": "x"}
+    # Fix D: observation values must appear verbatim in the evidence they cite.
+    return {"status": "ok", "artifact_path": artifact_path, "wiped_file": "report.pdf"}
 
 TOOL = ToolSchema(
     name="read_sharedprefs", purpose="Read an Android shared_prefs XML.",

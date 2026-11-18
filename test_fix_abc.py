@@ -52,11 +52,11 @@ class FakeLLM:
 def read(path): return json.dumps({"thought": "read", "action": "call_tool",
                                    "tool_name": "read_sharedprefs", "tool_args": {"artifact_path": path}})
 CLAIM = "a secure file-wiping operation was executed on this device"
-def ach(disps, ev=("E0001",)):
+def ach(disps, ev=("E0001",), quote="3-pass overwrite"):
     cats = ["normal", "another_app", "system", "acquisition"]
     return json.dumps({"thought": "check", "action": "analyze", "alt_check": {"claim": CLAIM,
         "assessments": [{"category": c, "disposition": d, "rationale": f"why {c}",
-                         "evidence_ids": list(ev)} for c, d in zip(cats, disps)]}})
+                         "evidence_ids": list(ev), "quote": quote} for c, d in zip(cats, disps)]}})
 DETECT = json.dumps({"thought": "c", "action": "conclude", "verdict": "detected",
                      "category": "artifact_wiping", "evidence_ids": ["E0001"], "conclusion": "high"})
 BLOCKED = ["ruled_out", "plausible", "ruled_out", "ruled_out"]

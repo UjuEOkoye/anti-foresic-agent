@@ -68,10 +68,10 @@ script = [
     '{"thought":"read prefs","action":"call_tool","tool_name":"read_sharedprefs","tool_args":{"artifact_path":"/p.xml"}}',
     '{"thought":"check main claim","action":"analyze","alt_check":{"claim":"a secure file-wiping operation was executed on this device",'
     '"assessments":['
-    '{"category":"normal","disposition":"ruled_out","rationale":"report records a completed run","evidence_ids":["E0001"]},'
-    '{"category":"another_app","disposition":"ruled_out","rationale":"record is in that app private storage","evidence_ids":["E0001"]},'
-    '{"category":"system","disposition":"ruled_out","rationale":"OS does not write overwrite reports","evidence_ids":["E0001"]},'
-    '{"category":"acquisition","disposition":"ruled_out","rationale":"file parsed cleanly","evidence_ids":["E0001"]}]}}',
+    '{"category":"normal","disposition":"ruled_out","rationale":"report records a completed run","evidence_ids":["E0001"],"quote":"overwrite_3_pass"},'
+    '{"category":"another_app","disposition":"ruled_out","rationale":"record is in that app private storage","evidence_ids":["E0001"],"quote":"overwrite_3_pass"},'
+    '{"category":"system","disposition":"ruled_out","rationale":"OS does not write overwrite reports","evidence_ids":["E0001"],"quote":"overwrite_3_pass"},'
+    '{"category":"acquisition","disposition":"ruled_out","rationale":"file parsed cleanly","evidence_ids":["E0001"],"quote":"overwrite_3_pass"}]}}',
     '{"thought":"done","action":"conclude","conclusion":"artifact wiping detected (high confidence)"}',
 ]
 res = BoundedInvestigationLoop(LLMReasoner(cat, llm=FakeLLM(script)), cat, max_steps=6).run()

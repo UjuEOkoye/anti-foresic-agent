@@ -228,7 +228,14 @@ HARD RULES (follow exactly):
   it with an EXACT phrase copied from one of the overview's templates. Search for
   BEHAVIOUR (what the lines say happened), never for an app or package name.
 - Re-checking a claim cannot raise its confidence unless you gathered NEW
-  evidence since the previous check; "ruled_out" must cite evidence ids.
+  evidence since the previous check. "ruled_out" must cite evidence ids AND give
+  a "quote": exact text copied word-for-word from one of those evidence records
+  that shows why. Your rationale must say only what that quote really shows.
+- Observations for correlation: ONE fact per observation, with the value COPIED
+  WORD-FOR-WORD from the evidence (e.g. one observation per file name). Never a
+  summary or a count phrase — paraphrased values are ignored.
+- Never call an artifact missing or absent if it is listed in the inventory and
+  you have not read it yet. Read it first.
 - NEVER assume, guess, or name a specific application. Reason only from what the
   tools actually return. The identity of any tool is an OUTPUT, never an input.
 - A "finding" is something a tool PROVED. It MUST cite at least one evidence id
@@ -260,7 +267,7 @@ REPLY SCHEMA (include only the keys you need):
   "alt_check": {
     "claim": "an EXECUTION claim, e.g. a secure file-wiping operation was executed on this device",
     "assessments": [
-      {"category": "normal",      "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "...", "evidence_ids": ["E0001"]},
+      {"category": "normal",      "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "...", "evidence_ids": ["E0001"], "quote": "exact text from E0001"},
       {"category": "another_app", "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "..."},
       {"category": "system",      "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "..."},
       {"category": "acquisition", "disposition": "ruled_out|plausible|cannot_exclude", "rationale": "..."}
@@ -446,6 +453,7 @@ class LLMReasoner(Reasoner):
                     "disposition": str(a.get("disposition", "")),
                     "rationale": str(a.get("rationale", "")),
                     "evidence_ids": ev,
+                    "quote": str(a.get("quote", "") or ""),   # Fix D: verbatim support
                 })
             alt_check = {"claim": str(raw_ach.get("claim", "")), "assessments": assessments}
 
