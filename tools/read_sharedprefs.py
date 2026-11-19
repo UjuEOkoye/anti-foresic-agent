@@ -26,6 +26,55 @@ import xml.etree.ElementTree as ET
 from engine.tool_schema import ToolSchema, FieldSpec, FieldType
 
 
+# ---- embedded-JSON decoding (2026-11-19) ---------------------------------------
+# Apps often store structured records as JSON TEXT inside a preference value
+# (one long string). The agent's compact view cuts every value at 300 characters,
+# so the decisive fields of such a record (e.g. a success flag, byte totals, the
+# list of items) were never visible to it — in the real AndroidEraser2 capture the
+# agent saw only the first ~300 of 6,115 characters and concluded the record "may
+# be a never-executed configuration". This decodes any JSON objects found inside a
+# value (generic: no field or app names), and builds a SHORT structural summary:
+# scalar fields as stored, lists as {count, first items}. The full value stays in
+# 'entries' and in the audit store; the summary is placed first so the agent sees it.
+import json as _json
+
+_SUMMARY_LIST_ITEMS = 3
+_SUMMARY_STR_MAX = 120
+
+
+def _decode_embedded_json(text: str) -> list:
+    """Every JSON object/array found inside a string, in order (skips separators)."""
+    if not isinstance(text, str) or ("{" not in text and "[" not in text):
+        return []
+    dec, i, out = _json.JSONDecoder(), 0, []
+    while i < len(text):
+        if text[i] in "{[":
+            try:
+                obj, j = dec.raw_decode(text, i)
+                if isinstance(obj, (dict, list)):
+                    out.append(obj)
+                    i = j
+                    continue
+            except _json.JSONDecodeError:
+                pass
+        i += 1
+    return out
+
+
+def _summarize(value, depth: int = 0):
+    """Structure-preserving summary: scalars as stored, lists as {count, first}."""
+    if isinstance(value, dict):
+        if depth >= 3:
+            return {"keys": list(value)[:10]}
+        return {k: _summarize(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, list):
+        return {"count": len(value),
+                "first": [_summarize(v, depth + 1) for v in value[:_SUMMARY_LIST_ITEMS]]}
+    if isinstance(value, str) and len(value) > _SUMMARY_STR_MAX:
+        return value[:_SUMMARY_STR_MAX] + "...[cut]"
+    return value
+
+
 # ---- the handler: the function that actually does the work --------------------
 
 def _read_sharedprefs(artifact_path: str) -> dict:
@@ -73,11 +122,21 @@ def _read_sharedprefs(artifact_path: str) -> dict:
         else:
             entries[name] = (node.text or "").strip()
 
+    # 4. Decode structured records stored as JSON text inside values (see above).
+    decoded = {k: objs for k, v in entries.items() if (objs := _decode_embedded_json(v))}
+    summary = {k: {"records": len(objs), "records_summary": [_summarize(o) for o in objs]}
+               for k, objs in decoded.items()}
+
     return {
         "status": "ok",
         "artifact_path": artifact_path,
+        # placed BEFORE 'entries' so it stays inside the agent's compact view
+        "decoded_json_summary": summary,
         "entries": entries,
-        "note": f"Read {len(entries)} preference entries.",
+        "decoded_json": decoded,          # full decoded records (also in the audit store)
+        "note": (f"Read {len(entries)} preference entries"
+                 + (f"; decoded JSON records inside: {', '.join(f'{k} ({len(o)})' for k, o in decoded.items())}"
+                    if decoded else "") + "."),
     }
 
 

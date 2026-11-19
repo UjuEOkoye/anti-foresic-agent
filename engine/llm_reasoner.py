@@ -224,6 +224,12 @@ HARD RULES (follow exactly):
   main claim CLEARED. If it is blocked, run a new alt_check that answers each
   alternative with evidence, or conclude "inconclusive".
   Do not conclude "inconclusive" when the main claim cleared.
+- If a CASE DIGEST is present, it was computed by deterministic code from EVERY
+  artifact read IN FULL. Treat its counts, links and quotes as established facts
+  and base your reasoning on them; cite the evidence ids it shows and quote its
+  exact text. You do not need to re-read those artifacts (use search_evidence
+  only for a detail). Your job is to JUDGE: what the facts mean, whether each
+  alternative explanation is ruled out by them, and the verdict.
 - Logs: read a log file FIRST WITHOUT a pattern to get its overview, then search
   it with an EXACT phrase copied from one of the overview's templates. Search for
   BEHAVIOUR (what the lines say happened), never for an app or package name.

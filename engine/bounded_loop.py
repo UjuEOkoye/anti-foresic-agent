@@ -309,11 +309,26 @@ class BoundedInvestigationLoop:
                 context += "\n\n" + self.kb.as_prompt_block(cards)
         return context
 
-    def run(self, initial_observation: str | None = None) -> InvestigationResult:
+    def run(self, initial_observation: str | None = None, digest: Any = None) -> InvestigationResult:
         # main.py seeds this with the capture's artifact inventory (real paths) so
         # the agent does not have to invent paths. Default keeps old behaviour.
         last_observation: Any = initial_observation or "Investigation started. No evidence gathered yet."
         self._briefing = initial_observation or ""     # pin it for EVERY step
+        # BOX 5 (2026-11-19): if a case digest was built (every artifact read IN FULL
+        # by deterministic code, cross-artifact links computed), pin it in the
+        # briefing, and record those reads so the agent starts from complete facts.
+        if digest is not None:
+            self._briefing = (self._briefing + "\n\n" + digest.text).strip()
+            self._read_paths |= set(digest.read_paths)
+            for eid, header in digest.evidence:
+                self._evidence_views.append((f"[{eid}] {header}",
+                    "(read IN FULL by the box-5 pre-pass; facts are in the CASE DIGEST; "
+                    "use search_evidence for any detail)"))
+            self.memory.log("note", f"BOX 5 digest: {len(digest.read_paths)} artifacts read in full, "
+                                    f"{len(digest.evidence)} evidence records")
+            last_observation = ("The CASE DIGEST above was computed from every artifact read in "
+                                "full. Reason over it: form your hypothesis, check the alternatives "
+                                "with evidence from it, and conclude.")
 
         while self.memory.step < self.max_steps:
             step = self.memory.advance_step()

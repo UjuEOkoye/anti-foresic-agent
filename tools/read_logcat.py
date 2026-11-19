@@ -238,7 +238,8 @@ READ_LOGCAT = ToolSchema(
         "reference file paths, most active log tags). Then call it again WITH a "
         "pattern (regex or literal substring) to retrieve the exact matching lines "
         "as citable evidence. Always extracts filesystem paths referenced in the "
-        "log. Generic: it summarises and greps; it does not interpret or know any app."
+        "log. Log lines start with 'MM-DD HH:MM:SS.mmm  PID  TID LEVEL Tag:' (no year), so "
+        "search times in that form. Generic: it summarises and greps; it knows no app."
     ),
     args=[
         FieldSpec(

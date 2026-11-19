@@ -27,6 +27,7 @@ from engine.dual_output import DualOutput
 from tools.registry import build_catalog
 from tools.read_logcat import _decode_log_bytes
 from tools.search_evidence import make_search_evidence_tool
+from engine.evidence_digest import build_digest
 from knowledge_base import build_knowledge_base
 
 
@@ -209,6 +210,8 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=12, help="investigation step budget")
     parser.add_argument("--verbose", action="store_true",
                         help="print the full step-by-step investigation log (for diagnosing a run)")
+    parser.add_argument("--no-digest", action="store_true",
+                        help="ablation: skip the box-5 pre-pass (agent reads artifacts one by one)")
     args = parser.parse_args()
 
     print(f"Mode        : {args.mode}")
@@ -241,11 +244,19 @@ def main() -> None:
     # record in the audit store), so long values cut off in its view stay reachable.
     catalog.register(make_search_evidence_tool(dual.audit))
 
+    # BOX 5 — evidence distillation: read EVERY primary artifact in full with the
+    # allow-listed tools (each read preserved + hashed), extract generic facts, and
+    # compute cross-artifact links, BEFORE the agent reasons.
+    digest = None
+    if not args.no_digest:
+        digest = build_digest(inventory, catalog, dual)
+        print("\n" + digest.text)
+
     reasoner = build_reasoner(args.mode, catalog)
     loop = BoundedInvestigationLoop(reasoner, catalog, max_steps=args.max_steps,
                                     memory=memory, dual=dual, knowledge_base=knowledge_base,
                                     progress=True)
-    result = loop.run(initial_observation=initial_observation)
+    result = loop.run(initial_observation=initial_observation, digest=digest)
     print_result(result, verbose=args.verbose)
 
 

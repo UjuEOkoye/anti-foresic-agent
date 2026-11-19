@@ -98,4 +98,29 @@ inv = m.scan_capture(d)
 assert any(i["type"] == "recent_tasks" for i in inv), inv
 print("  OK")
 
+print("5 — JSON records stored inside a preference value are decoded and visible")
+from tools.read_sharedprefs import _read_sharedprefs
+from engine.dual_output import project
+rec = lambda n, k: ('{"id":"R%d","startTime":"T%d","success":true,"totalBytes":%d,'
+                    '"reportDetail":[%s]}' % (n, n, 1000 * n,
+                    ",".join('{"name":"file_%d_%d.jpg","success":true}' % (n, i) for i in range(k))))
+value = rec(1, 21) + "\u201a\u2017\u201a" + rec(2, 10)          # records joined by a separator
+xml = ('<?xml version="1.0" encoding="utf-8"?><map><string name="reports">%s</string>'
+       '<boolean name="first" value="true" /></map>') % value.replace("&", "&amp;").replace("<", "&lt;")
+fp2 = os.path.join(d, "prefs.xml"); open(fp2, "w", encoding="utf-8").write(xml)
+r = _read_sharedprefs(fp2)
+summ = r["decoded_json_summary"]["reports"]
+assert summ["records"] == 2 and summ["records_summary"][0]["success"] is True
+assert summ["records_summary"][0]["reportDetail"]["count"] == 21
+assert len(r["decoded_json"]["reports"][0]["reportDetail"]) == 21        # full record kept
+view = json.dumps(project(r), default=str)[:BoundedInvestigationLoop.MAX_VIEW_CHARS]
+assert '"success": true' in view and '"count": 21' in view and "file_1_0.jpg" in view
+assert list(r).index("decoded_json_summary") < list(r).index("entries")
+print("  OK")
+
+print("6 — logcat tool states its timestamp format (no year)")
+from tools.read_logcat import READ_LOGCAT
+assert "MM-DD HH:MM:SS.mmm" in READ_LOGCAT.purpose
+print("  OK")
+
 print("\nALL FINAL-FIX TESTS PASSED")
