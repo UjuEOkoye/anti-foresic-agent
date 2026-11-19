@@ -64,7 +64,8 @@ ALT_CATEGORY_QUESTIONS: dict[AltCategory, str] = {
     ),
     AltCategory.ANOTHER_APP: (
         "Could a DIFFERENT app or component have produced these artifacts, so the "
-        "attribution is wrong? (e.g. the records belong to another package)"
+        "attribution is wrong? (e.g. the records belong to another package; check which "
+        "process wrote the relevant log lines and which app that process id belongs to)"
     ),
     AltCategory.SYSTEM_BEHAVIOR: (
         "Could the operating system itself have produced this, with no user-initiated "

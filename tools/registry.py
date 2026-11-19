@@ -13,6 +13,7 @@ from engine.tool_catalog import ToolCatalog
 from tools.read_sharedprefs import READ_SHAREDPREFS
 from tools.read_usagestats import READ_USAGESTATS
 from tools.read_logcat import READ_LOGCAT
+from tools.read_recent_tasks import READ_RECENT_TASKS
 
 
 def build_catalog() -> ToolCatalog:
@@ -22,6 +23,7 @@ def build_catalog() -> ToolCatalog:
     catalog.register(READ_SHAREDPREFS)
     catalog.register(READ_USAGESTATS)
     catalog.register(READ_LOGCAT)
+    catalog.register(READ_RECENT_TASKS)
     # Future tools get registered here too, e.g.:
 
     return catalog

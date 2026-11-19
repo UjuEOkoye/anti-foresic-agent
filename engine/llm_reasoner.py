@@ -240,6 +240,11 @@ HARD RULES (follow exactly):
   use search_evidence on that evidence id to find the exact text you need.
 - Never call an artifact missing or absent if it is listed in the inventory and
   you have not read it yet. Read it first.
+- Know the normal lifecycle: an app's PRIVATE data is removed on uninstall. The
+  OS usage timeline survives uninstall and reboot (the most durable record);
+  recent tasks may or may not survive an uninstall and are cleared by reboot.
+  A system record surviving (or a recent task being gone) is NORMAL — survival
+  proves the app ran; it is not itself a sign of anti-forensics.
 - NEVER assume, guess, or name a specific application. Reason only from what the
   tools actually return. The identity of any tool is an OUTPUT, never an input.
 - A "finding" is something a tool PROVED. It MUST cite at least one evidence id

@@ -191,15 +191,26 @@ class BoundedInvestigationLoop:
     # ---- Fix D: verbatim checks against the raw evidence -------------------
     @staticmethod
     def _norm_text(text: str) -> str:
-        return " ".join(str(text).split()).lower()
+        # Whitespace/case-insensitive, and ignores JSON quoting (" and \\) so a quote
+        # copied from the JSON view the agent sees matches the stored values.
+        t = str(text).replace("\\", "").replace('"', "")
+        return " ".join(t.split()).lower()
 
     def _evidence_texts(self, evidence_id: str) -> list[str]:
-        """Every string/number value inside one raw evidence record (normalised)."""
+        """
+        Every string/number value inside one raw evidence record (normalised), PLUS
+        the record as JSON text. FINAL FIX (2026-11-19): the agent sees evidence as
+        JSON and copies text like '"app_launch_count": 4' (field name + value). The
+        Fix-D checker only compared against single values, so genuine quotes were
+        rejected and almost every "ruled_out" was downgraded. Matching against the
+        JSON form as well accepts what the agent really saw — still word-for-word.
+        """
         try:
             raw = self.dual.audit.get(evidence_id)["raw"]
         except KeyError:
             return []
-        out: list[str] = []
+        out: list[str] = [self._norm_text(json.dumps(raw, default=str)),
+                          self._norm_text(json.dumps(raw, default=str, ensure_ascii=False))]
         def walk(v: Any) -> None:
             if isinstance(v, dict):
                 for k, x in v.items():
@@ -453,6 +464,11 @@ class BoundedInvestigationLoop:
                 self._last_ach = gate     # the BINDING gate for a "detected" verdict (Fix 3)
                 self._ach_evidence_seen = seen_now
                 note = f"ACH (6.7): {gate.confidence.upper()} — {gate.verdict()}"
+                if gate.clears and gate.confidence == "reduced":
+                    # FINAL FIX: finish-line run 1 read "cannot_exclude" as blocking and
+                    # concluded "inconclusive" after a CLEARING check.
+                    note += (" REDUCED means the check CLEARS: a 'detected' verdict is allowed "
+                             "(at reduced confidence).")
                 if "capped" in gate.summary:
                     note += (" To raise confidence, gather NEW evidence (e.g. an artifact or "
                              "search not yet done) that addresses the remaining alternative.")

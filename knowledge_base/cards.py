@@ -88,17 +88,21 @@ STARTER_CARDS: list[KnowledgeCard] = [
         title="Artifact survival vs destruction (durable timeline, destroyed app-private data)",
         category="artifact_wiping",
         summary=(
-            "On mobile, some artifacts survive even uninstall and reboot (an app-usage "
-            "timeline), while an app's own private data (its config store, recent-task and "
-            "snapshot entries) is destroyed by uninstall or reboot. So a wiping app's RUN can "
-            "still be proven from durable artifacts after the app and its private data are gone."
+            "On mobile, an app's own private data (its config store, databases, cache) is "
+            "removed when the app is uninstalled, but SYSTEM-level records about the app can be "
+            "kept by the operating system. The app-usage timeline consistently survives uninstall "
+            "AND reboot, which makes it the strongest long-term evidence that an app ran. "
+            "Recent-task / task-snapshot entries MAY survive an uninstall in some cases (not "
+            "reliably) and are cleared by a reboot. So a wiping app's RUN can still be proven, "
+            "above all from the usage timeline, after the app and its private data are gone."
         ),
         indicators=[
-            "a durable usage timeline still showing an app ran, after the app was removed",
-            "proof of a run surviving in one artifact while the richer detail is gone from another",
-            "NOTE: app-private artifacts (config store, recent tasks, snapshots) being ABSENT after "
-            "uninstall/reboot is EXPECTED (see the normal uninstall baseline) and is NOT by itself "
-            "evidence of wiping; the evidence is what SURVIVES, not what is gone",
+            "a system usage timeline still showing an app ran (launches, activities), after the app was removed",
+            "proof of a run surviving in a system record while the richer detail (the app's own "
+            "report) is gone with the app",
+            "NOTE: this survival is NORMAL operating-system retention (see the artifact-lifecycle "
+            "baseline). It PROVES the app ran; it is not itself a sign of anti-forensics. And the "
+            "app's private data being ABSENT after uninstall is EXPECTED and is NOT by itself evidence of wiping",
         ],
         keywords=["survive", "survival", "durable", "persist", "uninstall", "reboot",
                   "usagestats", "usage", "recent", "tasks", "snapshots", "destroyed",
@@ -224,6 +228,49 @@ STARTER_CARDS: list[KnowledgeCard] = [
     ),
 
     # ======================= FORENSIC PRINCIPLES =========================
+    KnowledgeCard(
+        card_id="NB-04",
+        title="Normal: artifact lifecycle — app-private vs system-level records",
+        category="normal_baseline",
+        summary=(
+            "Android keeps two kinds of records about an app. APP-PRIVATE data (the app's own "
+            "config store, databases, cache) lives with the app and is removed on uninstall. "
+            "SYSTEM-level records are kept by the operating system: the app-usage timeline "
+            "(launch counts, active time, activity events) survives uninstall AND reboot — the "
+            "most durable record; recent-task and task-snapshot entries sometimes survive an "
+            "uninstall (not reliably) and are cleared by a reboot; the live system log is "
+            "volatile and is lost unless dumped. All of this is normal behaviour."
+        ),
+        indicators=[
+            "app-private data present before uninstall, absent after: normal removal",
+            "usage timeline for a removed app still present after uninstall or reboot: normal retention",
+            "recent-task entry present OR absent after uninstall, and gone after reboot: both normal",
+            "survival of a system record proves the app ran; it is NOT by itself anti-forensic",
+        ],
+        keywords=["lifecycle", "uninstall", "reboot", "survive", "survival", "retention",
+                  "system", "private", "usage", "timeline", "recent", "task", "snapshot",
+                  "normal", "expected", "volatile", "removed", "persist"],
+    ),
+    KnowledgeCard(
+        card_id="FP-03",
+        title="Principle: attribute a log line to an app by its process id",
+        category="forensic_principle",
+        summary=(
+            "Every system-log line carries the process id (PID) of the process that wrote it. "
+            "The system's own process-start line ('Start proc <pid>:<package>/<uid> ...') names "
+            "the app that owns that PID. Matching the PID of action lines (e.g. lines about "
+            "files) to a process-start line attributes those actions to a specific app — the "
+            "evidence-based way to rule another application in or out. The app's uid (e.g. "
+            "u0a42 = 10042) can also link the log to other records that store a uid."
+        ),
+        indicators=[
+            "action lines in the system log written by one PID",
+            "a process-start line mapping that PID to a package",
+            "the same uid appearing in another record (e.g. a recent-task entry)",
+        ],
+        keywords=["pid", "process", "attribute", "attribution", "another", "application",
+                  "app", "logcat", "log", "start", "proc", "uid", "owner", "which"],
+    ),
     KnowledgeCard(
         card_id="FP-01",
         title="Principle: missing is not the same as deleted (W1)",
