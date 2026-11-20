@@ -24,6 +24,7 @@ correct behavior).
 
 from __future__ import annotations
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -183,6 +184,8 @@ class BoundedInvestigationLoop:
         self._briefing: str = ""                       # task + artifact inventory
         self._evidence_views: list[tuple[str, str]] = []   # (header, compact view)
         self._read_paths: set[str] = set()             # artifact paths already read
+        # Digest lines with the evidence ids each was computed from (provenance).
+        self._digest_lines: list[tuple[frozenset[str], str]] = []
 
     # Each pinned evidence view is capped so the prompt cannot grow without limit.
     # (The FULL raw result is always in the audit store; this is only the agent's view.)
@@ -228,7 +231,41 @@ class BoundedInvestigationLoop:
         needle = self._norm_text(text)
         if len(needle) < 3:
             return False
-        return any(needle in hay for e in evidence_ids for hay in self._evidence_texts(e))
+        if any(needle in hay for e in evidence_ids for hay in self._evidence_texts(e)):
+            return True
+        # PROVENANCE-AWARE QUOTE CHECK (2026-11-19, after digest runs 1-3): the agent
+        # often quotes a CASE DIGEST line (e.g. "errors=0 (4/4)") but cites the source
+        # records that line was computed from, not the digest id. Accept the quote only
+        # if it appears word-for-word inside ONE digest line AND every evidence id that
+        # line was built from is among the cited ids. A made-up quote, or a digest line
+        # about other evidence, is still rejected.
+        cited = {str(e) for e in evidence_ids}
+        for sources, line in self._digest_lines:
+            if sources and sources <= cited and needle in self._norm_text(line):
+                self.memory.log("ach_detail", f"  quote matched a digest line computed from "
+                                              f"[{', '.join(sorted(sources))}]")
+                return True
+        return False
+
+    _DIGEST_ID_RE = re.compile(r"\[(E\d+)\]")
+
+    def _index_digest(self, text: str) -> None:
+        """
+        Record, for every digest line, the evidence ids it was computed from. A line
+        carries its own [Exxxx] ids; an indented line with no id belongs to the
+        bullet ("- [Exxxx] ...") above it.
+        """
+        self._digest_lines = []
+        parent: frozenset[str] = frozenset()
+        for line in text.splitlines():
+            ids = frozenset(self._DIGEST_ID_RE.findall(line))
+            if line.startswith("- "):
+                parent = ids
+            elif not line.startswith(" "):
+                parent = frozenset()                  # section header: no provenance
+            own = ids if ids else (parent if line.startswith(" ") else frozenset())
+            if own:
+                self._digest_lines.append((own, line))
 
     # ---- Fix E: no "absence" for an artifact that has not been read ---------
     def _unread_match(self, location: str) -> str:
@@ -320,6 +357,7 @@ class BoundedInvestigationLoop:
         if digest is not None:
             self._briefing = (self._briefing + "\n\n" + digest.text).strip()
             self._read_paths |= set(digest.read_paths)
+            self._index_digest(digest.text)
             for eid, header in digest.evidence:
                 self._evidence_views.append((f"[{eid}] {header}",
                     "(read IN FULL by the box-5 pre-pass; facts are in the CASE DIGEST; "
